@@ -1,4 +1,4 @@
-# nanobot
+# GoMikroBot
 
 ![GoMikroBot banner](rebranding/Generated%20Image%20January%2009,%202026%20-%203_52PM.jpeg)
 
