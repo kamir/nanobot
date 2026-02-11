@@ -1,4 +1,4 @@
-# nanobot
+# GoMikroBot
 
 ![GoMikroBot banner](rebranding/Gemini_Generated_Image_y81s2xy81s2xy81s.png)
 
