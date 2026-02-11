@@ -1,6 +1,6 @@
 # nanobot
 
-![GoMikroBot banner](rebranding/Generated%20Image%20January%2009,%202026%20-%203_52PM.jpeg)
+![GoMikroBot banner](rebranding/Gemini_Generated_Image_y81s2xy81s2xy81s.png)
 
 A Go-based bot that aims to become a self-controlled personal assistant for day-to-day digital tasks.
 
