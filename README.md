@@ -1,8 +1,8 @@
 # GoMikroBot
 
-![GoMikroBot banner](rebranding/Gemini_Generated_Image_y81s2xy81s2xy81s.png)
-
 A Go-based bot that aims to become a self-controlled personal assistant for day-to-day digital tasks.
+
+![GoMikroBot banner](rebranding/Gemini_Generated_Image_y81s2xy81s2xy81s.png)
 
 ## Focus
 
