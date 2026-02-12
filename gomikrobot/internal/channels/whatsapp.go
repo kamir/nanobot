@@ -35,6 +35,7 @@ type WhatsAppChannel struct {
 	container *sqlstore.Container
 	provider  provider.LLMProvider
 	timeline  *timeline.TimelineService
+	sendFn    func(ctx context.Context, msg *bus.OutboundMessage) error
 	mu        sync.Mutex
 }
 
@@ -117,16 +118,7 @@ func (c *WhatsAppChannel) Start(ctx context.Context) error {
 	// Subscribe to outbound messages
 	c.Bus.Subscribe(c.Name(), func(msg *bus.OutboundMessage) {
 		go func() {
-			// Check silent mode — never send if enabled
-			if c.timeline != nil && c.timeline.IsSilentMode() {
-				fmt.Printf("🔇 Silent Mode: suppressed outbound to %s\n", msg.ChatID)
-				return
-			}
-			sendCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			if err := c.Send(sendCtx, msg); err != nil {
-				fmt.Printf("Error sending whatsapp message: %v\n", err)
-			}
+			c.handleOutbound(msg)
 		}()
 	})
 
@@ -161,6 +153,26 @@ func (c *WhatsAppChannel) Send(ctx context.Context, msg *bus.OutboundMessage) er
 	_, err = c.client.SendMessage(ctx, jid, waMsg)
 
 	return err
+}
+
+func (c *WhatsAppChannel) handleOutbound(msg *bus.OutboundMessage) {
+	// Check silent mode — never send if enabled
+	if c.timeline != nil && c.timeline.IsSilentMode() {
+		fmt.Printf("🔇 Silent Mode: suppressed outbound to %s reason=silent_mode channel=%s\n", msg.ChatID, c.Name())
+		return
+	}
+	sendCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := c.sendOutbound(sendCtx, msg); err != nil {
+		fmt.Printf("Error sending whatsapp message: %v\n", err)
+	}
+}
+
+func (c *WhatsAppChannel) sendOutbound(ctx context.Context, msg *bus.OutboundMessage) error {
+	if c.sendFn != nil {
+		return c.sendFn(ctx, msg)
+	}
+	return c.Send(ctx, msg)
 }
 
 func (c *WhatsAppChannel) eventHandler(evt interface{}) {
