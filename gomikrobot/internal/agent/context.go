@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kamir/gomikrobot/internal/group"
 	"github.com/kamir/gomikrobot/internal/provider"
 	"github.com/kamir/gomikrobot/internal/session"
 	"github.com/kamir/gomikrobot/internal/tools"
@@ -24,14 +25,18 @@ var bootstrapFiles = []string{
 // ContextBuilder assembles the system prompt and messages.
 type ContextBuilder struct {
 	workspace string
+	workRepo  string
+	systemRepo string
 	registry  *tools.Registry
 }
 
 // NewContextBuilder creates a new ContextBuilder.
-func NewContextBuilder(workspace string, registry *tools.Registry) *ContextBuilder {
+func NewContextBuilder(workspace string, workRepo string, systemRepo string, registry *tools.Registry) *ContextBuilder {
 	return &ContextBuilder{
-		workspace: workspace,
-		registry:  registry,
+		workspace:  workspace,
+		workRepo:   workRepo,
+		systemRepo: systemRepo,
+		registry:   registry,
 	}
 }
 
@@ -84,6 +89,18 @@ You have access to tools that allow you to:
 - Search the web and fetch web pages
 - Send messages to users
 
+## Action Policy (Go Native)
+When the user asks to create, plan, or document something, you must:
+1. Create the required artifact(s) immediately in the repo.
+2. Prefer these locations:
+   - /requirements for behavior/specs
+   - /tasks for plans and milestones
+   - /docs for explanations or summaries
+3. Report the exact file paths you wrote and a short summary.
+Do not respond with advice-only when a concrete artifact is requested.
+Writes are restricted to the work repo by default. To write elsewhere, prefix the path with '!'.
+When asked to remember something, store it in /memory inside the work repo.
+
 ## Current Time
 %s
 
@@ -92,6 +109,7 @@ You have access to tools that allow you to:
 
 ## Workspace
 Your workspace is at: %s
+- Work repo (exclusive write target): %s
 - Memory files: %s/memory/MEMORY.md
 - Daily notes: %s/memory/YYYY-MM-DD.md
 - Custom skills: %s/skills/{skill-name}/SKILL.md
@@ -99,7 +117,7 @@ Your workspace is at: %s
 IMPORTANT: When responding to direct questions, reply directly with text.
 Only use the 'message' tool when explicitly asked to send a message to a channel.
 Always be helpful, accurate, and concise.
-`, now, runtimeInfo, wsPath, wsPath, wsPath, wsPath)
+`, now, runtimeInfo, wsPath, b.workRepo, b.workRepo, b.workRepo, wsPath)
 }
 
 func (b *ContextBuilder) loadBootstrapFiles() string {
@@ -124,14 +142,17 @@ func (b *ContextBuilder) loadBootstrapFiles() string {
 }
 
 func (b *ContextBuilder) loadMemory() string {
-	// Expand workspace
-	wsPath := b.workspace
-	if strings.HasPrefix(wsPath, "~") {
+	// Prefer work repo memory
+	base := b.workRepo
+	if base == "" {
+		base = b.workspace
+	}
+	if strings.HasPrefix(base, "~") {
 		home, _ := os.UserHomeDir()
-		wsPath = filepath.Join(home, wsPath[1:])
+		base = filepath.Join(home, base[1:])
 	}
 
-	path := filepath.Join(wsPath, "memory", "MEMORY.md")
+	path := filepath.Join(base, "memory", "MEMORY.md")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return ""
@@ -155,26 +176,124 @@ func (b *ContextBuilder) buildSkillsSummary() string {
 		sb.WriteString(fmt.Sprintf("- %s: %s\n", tool.Name(), tool.Description()))
 	}
 
-	// Check for skills dir content (migrated from Python logic)
-	// This mirrors the "Available skills" section from Python
+	// Auto-load skills from the bot system repo (not the work repo).
+	if skills := b.loadSystemRepoSkills(); skills != "" {
+		sb.WriteString("\n\nSystem repo skills:\n")
+		sb.WriteString(skills)
+	}
+
+	return sb.String()
+}
+
+func (b *ContextBuilder) loadSystemRepoSkills() string {
+	base := b.systemRepoPath()
+	if base == "" {
+		return ""
+	}
+
+	var sb strings.Builder
+
+	// 1) skills/*/SKILL.md
+	skillsDir := filepath.Join(base, "skills")
+	entries, err := os.ReadDir(skillsDir)
+	if err == nil {
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			path := filepath.Join(skillsDir, e.Name(), "SKILL.md")
+			if data, err := os.ReadFile(path); err == nil {
+				sb.WriteString(fmt.Sprintf("\n## %s\n\n%s\n", e.Name(), string(data)))
+			}
+		}
+	}
+
+	// 2) day2day guidance (if present)
+	day2day := filepath.Join(base, "operations", "day2day", "README.md")
+	if data, err := os.ReadFile(day2day); err == nil {
+		sb.WriteString("\n## Day2Day Guidance\n\n")
+		sb.WriteString(string(data))
+		sb.WriteString("\n")
+	}
+
+	return strings.TrimSpace(sb.String())
+}
+
+func (b *ContextBuilder) systemRepoPath() string {
+	if b.systemRepo != "" {
+		path := b.systemRepo
+		if strings.HasPrefix(path, "~") {
+			home, _ := os.UserHomeDir()
+			path = filepath.Join(home, path[1:])
+		}
+		if abs, err := filepath.Abs(path); err == nil {
+			path = abs
+		}
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+
 	wsPath := b.workspace
 	if strings.HasPrefix(wsPath, "~") {
 		home, _ := os.UserHomeDir()
 		wsPath = filepath.Join(home, wsPath[1:])
 	}
+	if abs, err := filepath.Abs(wsPath); err == nil {
+		wsPath = abs
+	}
+	path := filepath.Join(wsPath, "Bottibot-REPO-01")
+	if _, err := os.Stat(path); err == nil {
+		return path
+	}
+	return ""
+}
 
-	skillsDir := filepath.Join(wsPath, "skills")
-	entries, err := os.ReadDir(skillsDir)
-	if err == nil && len(entries) > 0 {
-		sb.WriteString("\nAdditional skills available in workspace (use read_file to view SKILL.md):\n")
-		for _, e := range entries {
-			if e.IsDir() {
-				sb.WriteString(fmt.Sprintf("- %s\n", e.Name()))
+// BuildIdentityEnvelope extracts identity info from soul files and registered tools
+// to build an AgentIdentity for group collaboration.
+func (b *ContextBuilder) BuildIdentityEnvelope(agentID, agentName, model string) group.AgentIdentity {
+	// Extract first paragraph from SOUL.md
+	soulSummary := ""
+	wsPath := b.workspace
+	if strings.HasPrefix(wsPath, "~") {
+		home, _ := os.UserHomeDir()
+		wsPath = filepath.Join(home, wsPath[1:])
+	}
+	soulPath := filepath.Join(wsPath, "SOUL.md")
+	if data, err := os.ReadFile(soulPath); err == nil {
+		lines := strings.Split(string(data), "\n")
+		var para []string
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" && len(para) > 0 {
+				break
+			}
+			if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+				para = append(para, trimmed)
 			}
 		}
+		soulSummary = strings.Join(para, " ")
 	}
 
-	return sb.String()
+	// Collect tool names as capabilities
+	var capabilities []string
+	for _, tool := range b.registry.List() {
+		capabilities = append(capabilities, tool.Name())
+	}
+
+	// Determine active channels
+	channels := []string{"cli"} // CLI is always available
+
+	return group.AgentIdentity{
+		AgentID:      agentID,
+		AgentName:    agentName,
+		SoulSummary:  soulSummary,
+		Capabilities: capabilities,
+		Channels:     channels,
+		Model:        model,
+		JoinedAt:     time.Now().Format(time.RFC3339),
+		Status:       "active",
+	}
 }
 
 // BuildMessages constructs the message list for the LLM.

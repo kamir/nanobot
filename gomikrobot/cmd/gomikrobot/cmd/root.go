@@ -40,4 +40,5 @@ func init() {
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(agentCmd)
 	rootCmd.AddCommand(gatewayCmd)
+	rootCmd.AddCommand(groupCmd)
 }

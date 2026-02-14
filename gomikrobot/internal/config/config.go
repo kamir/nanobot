@@ -1,30 +1,46 @@
-// Package config provides configuration types and loading for gonanobot.
+// Package config provides configuration types and loading for gomikrobot.
 package config
 
 import "time"
 
 // Config is the root configuration struct.
+// Top-level groups: Paths, Model, Channels, Providers, Gateway, Tools.
 type Config struct {
-	Agents    AgentsConfig    `json:"agents"`
+	Paths     PathsConfig     `json:"paths"`
+	Model     ModelConfig     `json:"model"`
 	Channels  ChannelsConfig  `json:"channels"`
 	Providers ProvidersConfig `json:"providers"`
 	Gateway   GatewayConfig   `json:"gateway"`
 	Tools     ToolsConfig     `json:"tools"`
+	Group     GroupConfig     `json:"group"`
 }
 
-// AgentsConfig contains agent-related settings.
-type AgentsConfig struct {
-	Defaults AgentDefaults `json:"defaults"`
+// ---------------------------------------------------------------------------
+// Paths – filesystem locations
+// ---------------------------------------------------------------------------
+
+// PathsConfig groups all filesystem path settings.
+type PathsConfig struct {
+	Workspace      string `json:"workspace" envconfig:"WORKSPACE"`
+	WorkRepoPath   string `json:"workRepoPath" envconfig:"WORK_REPO_PATH"`
+	SystemRepoPath string `json:"systemRepoPath" envconfig:"SYSTEM_REPO_PATH"`
 }
 
-// AgentDefaults contains default agent settings.
-type AgentDefaults struct {
-	Workspace         string  `json:"workspace" envconfig:"WORKSPACE"`
-	Model             string  `json:"model" envconfig:"MODEL"`
+// ---------------------------------------------------------------------------
+// Model – LLM behaviour
+// ---------------------------------------------------------------------------
+
+// ModelConfig groups LLM model and agent-loop settings.
+type ModelConfig struct {
+	Name              string  `json:"name" envconfig:"MODEL"`
 	MaxTokens         int     `json:"maxTokens" envconfig:"MAX_TOKENS"`
 	Temperature       float64 `json:"temperature" envconfig:"TEMPERATURE"`
 	MaxToolIterations int     `json:"maxToolIterations" envconfig:"MAX_TOOL_ITERATIONS"`
 }
+
+// ---------------------------------------------------------------------------
+// Channels – messaging integrations
+// ---------------------------------------------------------------------------
 
 // ChannelsConfig contains all channel configurations.
 type ChannelsConfig struct {
@@ -51,9 +67,11 @@ type DiscordConfig struct {
 
 // WhatsAppConfig configures the WhatsApp channel.
 type WhatsAppConfig struct {
-	Enabled   bool     `json:"enabled" envconfig:"WHATSAPP_ENABLED"`
-	BridgeURL string   `json:"bridgeUrl" envconfig:"WHATSAPP_BRIDGE_URL"`
-	AllowFrom []string `json:"allowFrom"`
+	Enabled          bool     `json:"enabled" envconfig:"WHATSAPP_ENABLED"`
+	BridgeURL        string   `json:"bridgeUrl" envconfig:"WHATSAPP_BRIDGE_URL"`
+	AllowFrom        []string `json:"allowFrom"`
+	DropUnauthorized bool     `json:"dropUnauthorized" envconfig:"WHATSAPP_DROP_UNAUTHORIZED"`
+	IgnoreReactions  bool     `json:"ignoreReactions" envconfig:"WHATSAPP_IGNORE_REACTIONS"`
 }
 
 // FeishuConfig configures the Feishu channel.
@@ -65,6 +83,10 @@ type FeishuConfig struct {
 	VerificationToken string   `json:"verificationToken" envconfig:"FEISHU_VERIFICATION_TOKEN"`
 	AllowFrom         []string `json:"allowFrom"`
 }
+
+// ---------------------------------------------------------------------------
+// Providers – LLM API keys & endpoints
+// ---------------------------------------------------------------------------
 
 // ProvidersConfig contains LLM provider configurations.
 type ProvidersConfig struct {
@@ -91,6 +113,10 @@ type LocalWhisperConfig struct {
 	BinaryPath string `json:"binaryPath" envconfig:"WHISPER_BINARY_PATH"`
 }
 
+// ---------------------------------------------------------------------------
+// Gateway – HTTP server networking
+// ---------------------------------------------------------------------------
+
 // GatewayConfig contains gateway server settings.
 type GatewayConfig struct {
 	Host          string `json:"host" envconfig:"HOST"`
@@ -98,10 +124,30 @@ type GatewayConfig struct {
 	DashboardPort int    `json:"dashboardPort" envconfig:"DASHBOARD_PORT"`
 }
 
+// ---------------------------------------------------------------------------
+// Tools – tool-specific behaviour
+// ---------------------------------------------------------------------------
+
 // ToolsConfig contains tool-specific settings.
 type ToolsConfig struct {
 	Exec ExecToolConfig `json:"exec"`
 	Web  WebToolConfig  `json:"web"`
+}
+
+// ---------------------------------------------------------------------------
+// Group – multi-agent collaboration via Kafka
+// ---------------------------------------------------------------------------
+
+// GroupConfig contains settings for group collaboration.
+type GroupConfig struct {
+	Enabled        bool   `json:"enabled" envconfig:"ENABLED"`
+	GroupName      string `json:"groupName" envconfig:"GROUP_NAME"`
+	LFSProxyURL    string `json:"lfsProxyUrl" envconfig:"KAFSCALE_LFS_PROXY_URL"`
+	LFSProxyAPIKey string `json:"lfsProxyApiKey" envconfig:"KAFSCALE_LFS_PROXY_API_KEY"`
+	KafkaBrokers   string `json:"kafkaBrokers" envconfig:"KAFKA_BROKERS"`
+	ConsumerGroup  string `json:"consumerGroup" envconfig:"KAFKA_CONSUMER_GROUP"`
+	AgentID        string `json:"agentId" envconfig:"AGENT_ID"`
+	PollIntervalMs int    `json:"pollIntervalMs" envconfig:"POLL_INTERVAL_MS"`
 }
 
 // ExecToolConfig contains shell execution tool settings.
@@ -124,14 +170,16 @@ type SearchConfig struct {
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
-		Agents: AgentsConfig{
-			Defaults: AgentDefaults{
-				Workspace:         "~/.gomikrobot/workspace",
-				Model:             "gpt-4o",
-				MaxTokens:         8192,
-				Temperature:       0.7,
-				MaxToolIterations: 20,
-			},
+		Paths: PathsConfig{
+			Workspace:      "~/GoMikroBot-Workspace",
+			WorkRepoPath:   "~/GoMikroBot-Workspace",
+			SystemRepoPath: "/Users/kamir/GITHUB.kamir/nanobot/gomikrobot",
+		},
+		Model: ModelConfig{
+			Name:              "anthropic/claude-sonnet-4-5",
+			MaxTokens:         8192,
+			Temperature:       0.7,
+			MaxToolIterations: 20,
 		},
 		Providers: ProvidersConfig{
 			LocalWhisper: LocalWhisperConfig{
@@ -155,6 +203,11 @@ func DefaultConfig() *Config {
 					MaxResults: 10,
 				},
 			},
+		},
+		Group: GroupConfig{
+			Enabled:        false,
+			LFSProxyURL:    "http://localhost:8080",
+			PollIntervalMs: 2000,
 		},
 	}
 }
