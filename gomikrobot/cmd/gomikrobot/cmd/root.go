@@ -6,7 +6,9 @@ import (
 )
 
 var (
-	version = "0.1.0"
+	// version can be overridden at build time via:
+	// go build -ldflags "-X github.com/kamir/gomikrobot/cmd/gomikrobot/cmd.version=1.2.3"
+	version = "2.0.0"
 	logo    = `
    ____       __  __ _ _              ____        _   
   / ___| ___ |  \/  (_) | ___ __ ___ | __ )  ___ | |_ 
