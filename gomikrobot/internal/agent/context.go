@@ -66,7 +66,21 @@ func (b *ContextBuilder) BuildSystemPrompt() string {
 }
 
 func (b *ContextBuilder) getIdentity() string {
-	now := time.Now().Format("2006-01-02 15:04 (Monday)")
+	t := time.Now()
+	now := t.Format("2006-01-02 15:04 (Monday)")
+
+	// Pre-compute date references so the LLM never has to do date arithmetic
+	yesterday := t.AddDate(0, 0, -1)
+	tomorrow := t.AddDate(0, 0, 1)
+	dateRef := fmt.Sprintf("- Yesterday: %s (%s)\n- Today: %s (%s)\n- Tomorrow: %s (%s)",
+		yesterday.Format("2006-01-02"), yesterday.Format("Monday"),
+		t.Format("2006-01-02"), t.Format("Monday"),
+		tomorrow.Format("2006-01-02"), tomorrow.Format("Monday"))
+	// Next 7 days for weekday name resolution
+	for i := 2; i <= 7; i++ {
+		d := t.AddDate(0, 0, i)
+		dateRef += fmt.Sprintf("\n- %s: %s", d.Format("Monday"), d.Format("2006-01-02"))
+	}
 
 	// Expand workspace path
 	wsPath := b.workspace
@@ -104,6 +118,9 @@ When asked to remember something, store it in /memory inside the work repo.
 ## Current Time
 %s
 
+## Date Reference (use these — do not compute dates yourself)
+%s
+
 ## Runtime
 %s
 
@@ -117,7 +134,7 @@ Your workspace is at: %s
 IMPORTANT: When responding to direct questions, reply directly with text.
 Only use the 'message' tool when explicitly asked to send a message to a channel.
 Always be helpful, accurate, and concise.
-`, now, runtimeInfo, wsPath, b.workRepo, b.workRepo, b.workRepo, wsPath)
+`, now, dateRef, runtimeInfo, wsPath, b.workRepo, b.workRepo, b.workRepo, wsPath)
 }
 
 func (b *ContextBuilder) loadBootstrapFiles() string {

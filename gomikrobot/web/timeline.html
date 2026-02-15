@@ -1098,6 +1098,11 @@
                                     class="text-xs px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-white">
                                     {{ traceFloating ? 'Dock' : 'Float' }}
                                 </button>
+                                <button @click.stop="copyTraceJson"
+                                    class="text-xs px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-white transition-colors"
+                                    :class="{ 'bg-green-700 hover:bg-green-600': traceJsonCopied }">
+                                    {{ traceJsonCopied ? 'Copied!' : 'Copy JSON' }}
+                                </button>
                                 <button @click.stop="hideTracePanel" title="Close"
                                     class="text-xs px-2 py-1 rounded bg-[#3b1118] hover:bg-[#6b1f2c] text-white shadow-none hover:shadow-[0_0_14px_rgba(200,80,110,0.85)]">✕</button>
                             </div>
@@ -1487,6 +1492,46 @@
                 // Trace enhancements
                 const traceTaskInfo = ref(null)
                 const tracePolicyDecisions = ref([])
+                const traceJsonCopied = ref(false)
+
+                const copyTraceJson = async () => {
+                    const spans = traceSpans.value.map(s => ({
+                        type: s.type,
+                        time: s.time,
+                        duration: s.duration || '',
+                        title: s.title || s.type,
+                        metadata: s.metadata || {}
+                    }))
+                    const hasToolSpans = spans.some(s => s.type === 'TOOL')
+                    const hasReadFile = spans.some(s => s.type === 'TOOL' && s.metadata && s.metadata.tool_name === 'read_file')
+                    const exportObj = {
+                        trace_id: traceMeta.value.traceId || '',
+                        exported_at: new Date().toISOString(),
+                        spans,
+                        task: traceTaskInfo.value ? {
+                            task_id: traceTaskInfo.value.task_id,
+                            status: traceTaskInfo.value.status,
+                            prompt_tokens: traceTaskInfo.value.prompt_tokens,
+                            completion_tokens: traceTaskInfo.value.completion_tokens,
+                            total_tokens: traceTaskInfo.value.total_tokens,
+                            channel: traceMeta.value.channel || ''
+                        } : null,
+                        policy_decisions: tracePolicyDecisions.value || [],
+                        analysis: {
+                            used_tools: hasToolSpans,
+                            data_source: hasReadFile ? 'file_read' : (hasToolSpans ? 'tool_assisted' : 'llm_context_only'),
+                            span_count: spans.length,
+                            llm_iterations: spans.filter(s => s.type === 'LLM').length
+                        }
+                    }
+                    try {
+                        await navigator.clipboard.writeText(JSON.stringify(exportObj, null, 2))
+                        traceJsonCopied.value = true
+                        setTimeout(() => { traceJsonCopied.value = false }, 2000)
+                    } catch (e) {
+                        console.error('Failed to copy trace JSON', e)
+                    }
+                }
 
                 // Load silent mode from server
                 const loadSilentMode = async () => {
@@ -2989,7 +3034,7 @@
                 }
                 const bothPanelsVisible = computed(() => identityPanelVisible.value && repoPanelVisible.value)
 
-                return { events, filteredEvents, selectedUser, authFilter, silentMode, toggleSilent, senders, isBot, isTechnical, getDotClass, fetchData, formatTime, getMediaUrl, isDimmed, isImage, isAudio, isDocument, docIcon, docIconClass, docExt, webUsers, selectedWebUserId, newWebUserName, linkJid, webChatMessage, webStatus, systemCopyStatus, forceSend, showTechnical, loadWebUsers, createWebUser, loadWebLink, saveWebLink, unlinkWebLink, sendWebChat, saveForceSend, copyWebChat, copyMessage, copyMessageSystem, reprocessMessage, clipboardOpen, clipboardItems, clipboardSelected, toggleClipboard, selectAllClipboard, clearClipboard, deleteSelectedClipboard, copySelectedClipboard, removeClipboardItem, workRepoPath, loadWorkRepo, saveWorkRepo, pickWorkRepo, repoOptions, selectedRepoPath, defaultWorkRepoPath, activeRepoChoice, repoScanStatus, loadRepoOptions, loadDefaultWorkRepoPath, useSelectedRepo, useDefaultRepo, repoTree, repoFileContent, repoFileDiff, repoDiff, repoStatus, repoStatusError, repoRemoteInfo, repoCommitMessage, repoRemoteUrl, ghAuthStatus, repoBranches, selectedBranch, repoCommits, prTitle, prBody, prBase, prHead, prDraft, repoTab, repoInitialized, repoHealthClass, repoHealthLabel, repoHealthText, repoHealthDot, repoHasRemote, changedFiles, isItemChanged, refreshRepo, refreshAll, loadRepoTree, selectRepoItem, loadRepoStatus, loadRepoDiff, loadRepoLog, loadRepoBranches, checkoutBranch, loadGhAuth, commitRepo, pullRepo, pushRepo, initRepo, createPr, repoActionStatus, repoActionOk, repoActionAt, repoHover, repoHoverStyle, showRepoTooltip, hideRepoTooltip, repoPanelVisible, identityPanelVisible, toggleRepoPanel, toggleIdentityPanel, showRepoPanel, hideRepoPanel, hideIdentityPanel, repoFloating, repoPanel, repoFloatState, startDragRepo, startResizeRepo, toggleRepoFloating, repoPanelEl, identityPanel, identityPanelEl, identityFloating, configOpen, configStatus, configTab, configTabs, cfgBotRepoPath, identityRepoPath, cfgDefaultWorkRepoPath, cfgDefaultRepoSearchPath, cfgKafScaleProxyUrl, cfgAuthFilterDefault, cfgWhatsAppToken, cfgWhatsAppAllowlist, cfgWhatsAppDenylist, cfgWhatsAppPending, approvePending, denyPending, clearPending, openConfig, closeConfig, saveConfig, traceOpen, tracePanelVisible, traceMeta, traceSpans, selectedSpan, traceFloating, tracePanel, tracePanelEl, openTrace, hideTracePanel, toggleTracePanel, startDragTrace, startResizeTrace, toggleTraceFloating, spanTypeColorHex, bothPanelsVisible, idRepoTree, idRepoFileContent, idRepoFileDiff, idRepoDiff, idRepoStatus, idRepoStatusError, idRepoRemoteInfo, idRepoCommitMessage, idRepoRemoteUrl, idGhAuthStatus, idRepoBranches, idSelectedBranch, idRepoCommits, idPrTitle, idPrBody, idPrBase, idPrHead, idPrDraft, idRepoTab, idRepoActionStatus, idRepoActionOk, idRepoActionAt, idRepoInitialized, idRepoHealthClass, idRepoHealthLabel, idRepoHealthText, idRepoHealthDot, idRepoHasRemote, idChangedFiles, isIdItemChanged, refreshIdentity, loadIdRepoTree, selectIdRepoItem, loadIdRepoStatus, loadIdRepoDiff, loadIdRepoLog, loadIdRepoBranches, checkoutIdBranch, loadIdGhAuth, commitIdRepo, pullIdRepo, pushIdRepo, initIdRepo, createIdPr, tasksPanelVisible, tasksList, selectedTask, tasksFilterStatus, tasksFilterChannel, loadTasks, toggleTasksPanel, hideTasksPanel, cfgDailyTokenLimit, cfgMaxAutoTier, traceTaskInfo, tracePolicyDecisions, traceViewMode, traceGraphSvg, groupPanelVisible, groupStatus, groupMembers, renderTraceGraph, loadGroupStatus, loadGroupMembers, toggleGroupPanel, switchMode, appMode }
+                return { events, filteredEvents, selectedUser, authFilter, silentMode, toggleSilent, senders, isBot, isTechnical, getDotClass, fetchData, formatTime, getMediaUrl, isDimmed, isImage, isAudio, isDocument, docIcon, docIconClass, docExt, webUsers, selectedWebUserId, newWebUserName, linkJid, webChatMessage, webStatus, systemCopyStatus, forceSend, showTechnical, loadWebUsers, createWebUser, loadWebLink, saveWebLink, unlinkWebLink, sendWebChat, saveForceSend, copyWebChat, copyMessage, copyMessageSystem, reprocessMessage, clipboardOpen, clipboardItems, clipboardSelected, toggleClipboard, selectAllClipboard, clearClipboard, deleteSelectedClipboard, copySelectedClipboard, removeClipboardItem, workRepoPath, loadWorkRepo, saveWorkRepo, pickWorkRepo, repoOptions, selectedRepoPath, defaultWorkRepoPath, activeRepoChoice, repoScanStatus, loadRepoOptions, loadDefaultWorkRepoPath, useSelectedRepo, useDefaultRepo, repoTree, repoFileContent, repoFileDiff, repoDiff, repoStatus, repoStatusError, repoRemoteInfo, repoCommitMessage, repoRemoteUrl, ghAuthStatus, repoBranches, selectedBranch, repoCommits, prTitle, prBody, prBase, prHead, prDraft, repoTab, repoInitialized, repoHealthClass, repoHealthLabel, repoHealthText, repoHealthDot, repoHasRemote, changedFiles, isItemChanged, refreshRepo, refreshAll, loadRepoTree, selectRepoItem, loadRepoStatus, loadRepoDiff, loadRepoLog, loadRepoBranches, checkoutBranch, loadGhAuth, commitRepo, pullRepo, pushRepo, initRepo, createPr, repoActionStatus, repoActionOk, repoActionAt, repoHover, repoHoverStyle, showRepoTooltip, hideRepoTooltip, repoPanelVisible, identityPanelVisible, toggleRepoPanel, toggleIdentityPanel, showRepoPanel, hideRepoPanel, hideIdentityPanel, repoFloating, repoPanel, repoFloatState, startDragRepo, startResizeRepo, toggleRepoFloating, repoPanelEl, identityPanel, identityPanelEl, identityFloating, configOpen, configStatus, configTab, configTabs, cfgBotRepoPath, identityRepoPath, cfgDefaultWorkRepoPath, cfgDefaultRepoSearchPath, cfgKafScaleProxyUrl, cfgAuthFilterDefault, cfgWhatsAppToken, cfgWhatsAppAllowlist, cfgWhatsAppDenylist, cfgWhatsAppPending, approvePending, denyPending, clearPending, openConfig, closeConfig, saveConfig, traceOpen, tracePanelVisible, traceMeta, traceSpans, selectedSpan, traceFloating, tracePanel, tracePanelEl, openTrace, hideTracePanel, toggleTracePanel, startDragTrace, startResizeTrace, toggleTraceFloating, spanTypeColorHex, bothPanelsVisible, idRepoTree, idRepoFileContent, idRepoFileDiff, idRepoDiff, idRepoStatus, idRepoStatusError, idRepoRemoteInfo, idRepoCommitMessage, idRepoRemoteUrl, idGhAuthStatus, idRepoBranches, idSelectedBranch, idRepoCommits, idPrTitle, idPrBody, idPrBase, idPrHead, idPrDraft, idRepoTab, idRepoActionStatus, idRepoActionOk, idRepoActionAt, idRepoInitialized, idRepoHealthClass, idRepoHealthLabel, idRepoHealthText, idRepoHealthDot, idRepoHasRemote, idChangedFiles, isIdItemChanged, refreshIdentity, loadIdRepoTree, selectIdRepoItem, loadIdRepoStatus, loadIdRepoDiff, loadIdRepoLog, loadIdRepoBranches, checkoutIdBranch, loadIdGhAuth, commitIdRepo, pullIdRepo, pushIdRepo, initIdRepo, createIdPr, tasksPanelVisible, tasksList, selectedTask, tasksFilterStatus, tasksFilterChannel, loadTasks, toggleTasksPanel, hideTasksPanel, cfgDailyTokenLimit, cfgMaxAutoTier, traceTaskInfo, tracePolicyDecisions, traceJsonCopied, copyTraceJson, traceViewMode, traceGraphSvg, groupPanelVisible, groupStatus, groupMembers, renderTraceGraph, loadGroupStatus, loadGroupMembers, toggleGroupPanel, switchMode, appMode }
             }
         })
         app.component('github-panel', GithubPanel)

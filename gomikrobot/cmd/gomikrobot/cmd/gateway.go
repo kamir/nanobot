@@ -1541,8 +1541,11 @@ func runGateway(cmd *cobra.Command, args []string) {
 				healthMap[th.TopicName] = th
 			}
 
+			// Track which topics are already in the manifest
+			knownTopics := make(map[string]bool)
 			for i, t := range coreTopics {
 				name := t["name"].(string)
+				knownTopics[name] = true
 				if st, ok := statsMap[name]; ok {
 					coreTopics[i]["stats"] = st
 				}
@@ -1552,6 +1555,7 @@ func runGateway(cmd *cobra.Command, args []string) {
 			}
 			for i, t := range skillTopics {
 				name := t["name"].(string)
+				knownTopics[name] = true
 				if st, ok := statsMap[name]; ok {
 					skillTopics[i]["stats"] = st
 				}
@@ -1560,10 +1564,36 @@ func runGateway(cmd *cobra.Command, args []string) {
 				}
 			}
 
-			// XP leaderboard
-			xp, _ := timeSvc.GetAgentXP()
-			if xp == nil {
-				xp = []timeline.AgentXP{}
+			// Add topics from stats that aren't in the manifest (fallback discovery)
+			for topicName, st := range statsMap {
+				if knownTopics[topicName] {
+					continue
+				}
+				cat := inferTopicCategory(topicName)
+				entry := map[string]any{
+					"name": topicName, "category": cat,
+					"description": "Discovered from message log", "consumers": []string{},
+					"stats": st,
+				}
+				if h, ok := healthMap[topicName]; ok {
+					entry["health"] = h
+				}
+				if strings.Contains(topicName, ".skill.") {
+					skillTopics = append(skillTopics, entry)
+				} else {
+					coreTopics = append(coreTopics, entry)
+				}
+			}
+
+			// XP leaderboard (deduplicated by agent_id)
+			xpRaw, _ := timeSvc.GetAgentXP()
+			seen := make(map[string]bool)
+			xp := make([]timeline.AgentXP, 0, len(xpRaw))
+			for _, a := range xpRaw {
+				if !seen[a.AgentID] {
+					seen[a.AgentID] = true
+					xp = append(xp, a)
+				}
 			}
 
 			json.NewEncoder(w).Encode(map[string]any{
@@ -2580,7 +2610,7 @@ func runGateway(cmd *cobra.Command, args []string) {
 
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/" {
-				http.Redirect(w, r, "/timeline", http.StatusFound)
+				http.ServeFile(w, r, "web/index.html")
 			}
 		})
 
@@ -2891,4 +2921,26 @@ func (a *groupTraceAdapter) PublishTrace(ctx context.Context, payload interface{
 
 func (a *groupTraceAdapter) PublishAudit(ctx context.Context, eventType, traceID, detail string) error {
 	return a.mgr.PublishAudit(ctx, eventType, traceID, detail)
+}
+
+// inferTopicCategory guesses the category from a topic name when the manifest is incomplete.
+func inferTopicCategory(name string) string {
+	switch {
+	case strings.Contains(name, ".control.") || strings.Contains(name, ".announce") ||
+		strings.Contains(name, ".roster") || strings.Contains(name, ".onboarding") ||
+		strings.Contains(name, ".orchestrator"):
+		return "control"
+	case strings.Contains(name, ".observe.") || strings.Contains(name, ".traces") ||
+		strings.Contains(name, ".audit"):
+		return "observe"
+	case strings.Contains(name, ".tasks.") || strings.Contains(name, ".requests") ||
+		strings.Contains(name, ".responses"):
+		return "tasks"
+	case strings.Contains(name, ".memory."):
+		return "memory"
+	case strings.Contains(name, ".skill."):
+		return "skill"
+	default:
+		return "control"
+	}
 }

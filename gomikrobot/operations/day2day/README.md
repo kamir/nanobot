@@ -45,6 +45,46 @@ Example: `status tasks` or `day2day task status 2026-02-14`
 - Deploy staging environment
 ```
 
+## Natural Language Task Handling
+
+When the user asks about tasks in natural language (not using dtu/dtp/dts commands), follow these rules STRICTLY:
+
+### RULE 1: Always read before answering
+Before answering ANY question about tasks (e.g. "show me tasks", "what's on my list for Monday"), you MUST:
+1. Determine the target date (compute from "tomorrow", "Monday", etc. using the current date shown in your system prompt)
+2. Use `read_file` to read `{system_repo}/operations/day2day/tasks/YYYY-MM-DD.md`
+3. Answer based ONLY on file contents. Never answer from memory or prior conversation.
+
+### RULE 2: Never overwrite — always append
+When adding tasks to an existing file:
+1. First `read_file` to get current contents
+2. Use `edit_file` to INSERT new tasks at the end of the `## Tasks` section
+3. NEVER use `write_file` on an existing task file — it destroys previous content
+
+When creating a new file (no file exists for that date):
+1. Use `write_file` with the full template including the new tasks
+
+### RULE 3: Preserve original content
+- Keep the user's original language (German stays German, English stays English)
+- Do not rephrase, categorize, or reformat task text
+- Use the exact checkbox format: `- [ ] <user's text as-is>`
+
+### RULE 4: Date computation
+- "tomorrow" / "morgen" = current date + 1 day
+- "Monday" / "Montag" = next occurrence of that weekday from current date
+- Always verify: state the computed date back to the user before writing
+- The current date is in your system prompt header — use it, don't guess
+
+### RULE 5: Editing the correct section
+Task files have these sections in order:
+1. `## Tasks` — task items (- [ ] / - [x])
+2. `## Progress Log` — timestamped entries
+3. `## Notes / Context`
+4. `## Consolidated State`
+5. `## Next Step`
+
+When appending tasks, use edit_file to find the LAST task line (- [ ] or - [x]) in `## Tasks` and insert after it, BEFORE `## Progress Log`.
+
 ## Important
 
 - If a user asks about day2day commands in natural language, explain the commands listed above.

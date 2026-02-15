@@ -204,16 +204,41 @@
         .health-bar { height: 4px; border-radius: 2px; background: rgba(48,54,61,0.6); overflow: hidden; }
         .health-fill { height: 100%; border-radius: 2px; transition: width 0.5s ease; }
 
-        .pipe-body { cursor: pointer; transition: opacity 0.2s, filter 0.2s; }
-        .pipe-body:hover { filter: brightness(1.3); }
-        .pipe-label { font-size: 9px; fill: #9ca3af; }
-        .pipe-count { font-size: 9px; fill: #6b7280; text-anchor: end; }
-        .agent-label { font-size: 9px; fill: #c9d1d9; text-anchor: middle; }
+        .pipe-body { cursor: pointer; transition: opacity 0.3s, filter 0.3s; }
+        .pipe-body:hover { filter: brightness(1.4) drop-shadow(0 0 8px currentColor); }
+        .pipe-idle { animation: idle-pulse 4s ease-in-out infinite; }
+        @keyframes idle-pulse { 0%,100% { opacity: 0.4; } 50% { opacity: 0.55; } }
+        .pipe-label { font-size: 10px; fill: #d1d5db; font-weight: 600; font-family: ui-monospace, monospace; }
+        .pipe-count { font-size: 10px; fill: #9ca3af; text-anchor: start; font-weight: 700; font-family: ui-monospace, monospace; }
+        .pipe-count-bg { fill: rgba(0,0,0,0.5); }
+        .agent-label { font-size: 10px; fill: #e5e7eb; text-anchor: middle; font-weight: 600; }
         .factory-ground { fill: #161b22; }
-        .factory-sky { fill: #0a0e14; }
-        .support-stilt { stroke: #30363d; stroke-width: 3; }
-        .level-label { font-size: 11px; fill: #6b7280; text-transform: uppercase; letter-spacing: 0.1em; }
+        .factory-sky { fill: #060a10; }
+        .support-stilt { stroke: #21262d; stroke-width: 2; opacity: 0.6; }
+        .level-label { font-size: 12px; fill: #8b949e; text-transform: uppercase; letter-spacing: 0.15em; font-weight: 700; }
+        .pipe-glow { pointer-events: none; }
+        .valve-ring { transition: opacity 0.3s; }
+        .pressure-dot { transition: fill 0.5s, opacity 0.5s; }
+        .pressure-active { animation: pressure-blink 1.5s ease-in-out infinite; }
+        @keyframes pressure-blink { 0%,100% { opacity: 0.7; } 50% { opacity: 1; } }
+        @keyframes pipe-flow { 0% { offset-distance: 0%; } 100% { offset-distance: 100%; } }
         .density-popup { position: fixed; z-index: 60; pointer-events: auto; }
+
+        /* Industrial overview theme */
+        .ind-card { background: #0d1117; border: 1px solid rgba(255,107,53,0.15); border-radius: 10px; position: relative; overflow: hidden; transition: border-color 0.3s, box-shadow 0.3s; }
+        .ind-card:hover { border-color: rgba(255,107,53,0.35); box-shadow: 0 0 20px rgba(255,107,53,0.06); }
+        .ind-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, transparent, rgba(255,107,53,0.4), transparent); }
+        .ind-value { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 1.5rem; font-weight: 800; letter-spacing: 0.04em; }
+        .ind-label { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 9px; text-transform: uppercase; letter-spacing: 0.2em; color: #6b7280; }
+        .ind-glow-amber { color: #fbbf24; text-shadow: 0 0 12px rgba(251,191,36,0.3); }
+        .ind-glow-green { color: #22c55e; text-shadow: 0 0 12px rgba(34,197,94,0.3); }
+        .ind-glow-blue { color: #58a6ff; text-shadow: 0 0 12px rgba(88,166,255,0.3); }
+        .ind-glow-purple { color: #a855f7; text-shadow: 0 0 12px rgba(168,85,247,0.3); }
+        .ind-glow-orange { color: #ff6b35; text-shadow: 0 0 12px rgba(255,107,53,0.3); }
+        .ind-glow-red { color: #ef4444; text-shadow: 0 0 12px rgba(239,68,68,0.3); }
+        .ind-divider { height: 1px; background: linear-gradient(90deg, transparent, rgba(255,107,53,0.2), transparent); }
+        @keyframes ind-scan { 0% { left: -30%; } 100% { left: 130%; } }
+        .ind-scanline::after { content: ''; position: absolute; top: 0; bottom: 0; width: 30%; background: linear-gradient(90deg, transparent, rgba(255,107,53,0.03), transparent); animation: ind-scan 8s linear infinite; pointer-events: none; }
         .density-popup .sparkline-area { opacity: 0.25; }
         .density-popup .sparkline-line { fill: none; stroke-width: 1.5; }
         .density-popup .env-tag { display: inline-block; padding: 1px 6px; border-radius: 4px; background: rgba(48,54,61,0.5); color: #9ca3af; border: 1px solid rgba(48,54,61,0.6); margin: 2px; }
@@ -265,58 +290,179 @@
 
             <!-- Overview Tab -->
             <div v-if="activeTab === 'overview'" class="max-w-5xl mx-auto space-y-6">
-                <!-- Status Cards -->
+
+                <!-- ===== CONTROL ROOM BANNER ===== -->
+                <div class="rounded-xl overflow-hidden" style="border: 1px solid rgba(255,107,53,0.2);">
+                    <svg viewBox="0 0 900 140" style="width:100%; display:block;" xmlns="http://www.w3.org/2000/svg">
+                        <defs>
+                            <filter id="banner-glow" x="-50%" y="-50%" width="200%" height="200%">
+                                <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur"/>
+                                <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                            </filter>
+                        </defs>
+                        <!-- Dark factory backdrop -->
+                        <rect width="900" height="140" fill="#0a0e14"/>
+                        <!-- Grid -->
+                        <line v-for="i in 22" :key="'cg-'+i" :x1="i*40" y1="0" :x2="i*40" y2="140" stroke="#1a1f2b" stroke-width="0.5" opacity="0.25"/>
+                        <line v-for="i in 4" :key="'ch-'+i" x1="0" :y1="i*35" x2="900" :y2="i*35" stroke="#1a1f2b" stroke-width="0.5" opacity="0.25"/>
+
+                        <!-- Left gear assembly -->
+                        <g transform="translate(65, 70)">
+                            <circle r="28" fill="none" stroke="#ff6b35" stroke-width="1.5" opacity="0.2" stroke-dasharray="6 4">
+                                <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="15s" repeatCount="indefinite"/>
+                            </circle>
+                            <circle r="18" fill="none" stroke="#ff6b35" stroke-width="2" opacity="0.3">
+                                <animateTransform attributeName="transform" type="rotate" from="360" to="0" dur="10s" repeatCount="indefinite"/>
+                            </circle>
+                            <circle r="5" fill="#ff6b35" opacity="0.5"/>
+                            <circle r="2" fill="#fcd34d" opacity="0.8"/>
+                        </g>
+
+                        <!-- Right gear assembly -->
+                        <g transform="translate(835, 70)">
+                            <circle r="22" fill="none" stroke="#ff6b35" stroke-width="1.5" opacity="0.2" stroke-dasharray="5 3">
+                                <animateTransform attributeName="transform" type="rotate" from="360" to="0" dur="12s" repeatCount="indefinite"/>
+                            </circle>
+                            <circle r="14" fill="none" stroke="#ff6b35" stroke-width="2" opacity="0.25">
+                                <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="8s" repeatCount="indefinite"/>
+                            </circle>
+                            <circle r="4" fill="#ff6b35" opacity="0.4"/>
+                            <circle r="1.5" fill="#fcd34d" opacity="0.7"/>
+                        </g>
+
+                        <!-- Horizontal main pipe -->
+                        <rect x="110" y="64" width="680" height="12" rx="6" fill="#ff6b35" opacity="0.08"/>
+                        <rect x="110" y="64" width="680" height="12" rx="6" fill="none" stroke="#ff6b35" stroke-width="1" opacity="0.2"/>
+                        <!-- Pipe 3D shine -->
+                        <rect x="112" y="65" width="676" height="4" rx="2" fill="white" opacity="0.04"/>
+                        <!-- Flow bubble -->
+                        <circle r="4" fill="#ff6b35" opacity="0.5" filter="url(#banner-glow)">
+                            <animateMotion dur="5s" repeatCount="indefinite" path="M110,70 L790,70"/>
+                        </circle>
+                        <circle r="3" fill="#ff6b35" opacity="0.3">
+                            <animateMotion dur="7s" repeatCount="indefinite" begin="2.5s" path="M110,70 L790,70"/>
+                        </circle>
+
+                        <!-- Left valve -->
+                        <circle cx="110" cy="70" r="10" fill="#ff6b35" opacity="0.15"/>
+                        <circle cx="110" cy="70" r="7" fill="#0a0e14"/>
+                        <circle cx="110" cy="70" r="3" fill="#ff6b35" opacity="0.7">
+                            <animate attributeName="r" values="2.5;3.5;2.5" dur="3s" repeatCount="indefinite"/>
+                        </circle>
+                        <!-- Right valve -->
+                        <circle cx="790" cy="70" r="10" fill="#ff6b35" opacity="0.15"/>
+                        <circle cx="790" cy="70" r="7" fill="#0a0e14"/>
+                        <circle cx="790" cy="70" r="3" fill="#ff6b35" opacity="0.7">
+                            <animate attributeName="r" values="2.5;3.5;2.5" dur="3s" repeatCount="indefinite" begin="1s"/>
+                        </circle>
+
+                        <!-- CONTROL ROOM label -->
+                        <text x="450" y="32" text-anchor="middle" fill="#ff6b35" font-size="10" font-weight="700" letter-spacing="0.35em" opacity="0.5" style="font-family: ui-monospace, monospace;">CONTROL ROOM</text>
+
+                        <!-- Group name (hero) -->
+                        <text x="450" y="73" text-anchor="middle" dominant-baseline="middle" fill="white" font-size="20" font-weight="800" letter-spacing="0.12em" style="font-family: ui-monospace, monospace;">{{ (status.group_name || 'OFFLINE').toUpperCase() }}</text>
+
+                        <!-- Status indicator lights row -->
+                        <circle cx="360" cy="100" r="5" :fill="groupActive ? '#22c55e' : '#ef4444'" :opacity="groupActive ? 0.9 : 0.6">
+                            <animate v-if="groupActive" attributeName="opacity" values="0.6;1;0.6" dur="2s" repeatCount="indefinite"/>
+                        </circle>
+                        <text x="372" y="103" fill="#8b949e" font-size="9" letter-spacing="0.1em" style="font-family: ui-monospace, monospace;">{{ groupActive ? 'ONLINE' : 'OFFLINE' }}</text>
+
+                        <circle cx="450" cy="100" r="5" :fill="status.lfs_healthy ? '#22c55e' : '#ef4444'" opacity="0.7"/>
+                        <text x="462" y="103" fill="#8b949e" font-size="9" letter-spacing="0.1em" style="font-family: ui-monospace, monospace;">LFS</text>
+
+                        <circle cx="510" cy="100" r="5" :fill="groupActive ? '#58a6ff' : '#374151'" opacity="0.7"/>
+                        <text x="522" y="103" fill="#8b949e" font-size="9" letter-spacing="0.1em" style="font-family: ui-monospace, monospace;">KAFKA</text>
+
+                        <!-- Conveyor belt at bottom -->
+                        <rect x="0" y="126" width="900" height="14" fill="#161b22"/>
+                        <rect v-for="i in 45" :key="'belt-'+i" :x="i*20 - 6" y="129" width="12" height="8" rx="1.5" fill="#21262d" opacity="0.7"/>
+                        <line x1="0" y1="126" x2="900" y2="126" stroke="#30363d" stroke-width="1" opacity="0.5"/>
+                        <line x1="0" y1="140" x2="900" y2="140" stroke="#30363d" stroke-width="1" opacity="0.3"/>
+                    </svg>
+                </div>
+
+                <!-- ===== STATUS GAUGES ===== -->
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div class="glass-card rounded-lg p-4">
-                        <div class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Group</div>
-                        <div class="text-lg font-bold text-white">{{ status.group_name || '---' }}</div>
+                    <!-- Group gauge -->
+                    <div class="ind-card ind-scanline p-4">
+                        <div class="flex items-center gap-2 mb-2">
+                            <svg width="14" height="14" viewBox="0 0 14 14"><circle cx="7" cy="7" r="5" fill="none" stroke="#ff6b35" stroke-width="1.5" opacity="0.5"/><circle cx="7" cy="7" r="2" fill="#ff6b35" opacity="0.7"/></svg>
+                            <span class="ind-label">Group</span>
+                        </div>
+                        <div class="ind-value text-white truncate">{{ status.group_name || '---' }}</div>
                     </div>
-                    <div class="glass-card rounded-lg p-4">
-                        <div class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Status</div>
-                        <div class="flex items-center gap-2">
-                            <div class="status-dot" :class="groupActive ? 'status-active' : 'status-inactive'"></div>
-                            <span class="text-lg font-bold" :class="groupActive ? 'text-green-400' : 'text-gray-500'">
-                                {{ groupActive ? 'Active' : 'Inactive' }}
-                            </span>
+                    <!-- Status gauge -->
+                    <div class="ind-card ind-scanline p-4">
+                        <div class="flex items-center gap-2 mb-2">
+                            <svg width="14" height="14" viewBox="0 0 14 14">
+                                <circle cx="7" cy="7" r="5" :fill="groupActive ? '#22c55e' : '#ef4444'" :opacity="groupActive ? 0.3 : 0.2"/>
+                                <circle cx="7" cy="7" r="3" :fill="groupActive ? '#22c55e' : '#ef4444'" :opacity="groupActive ? 0.8 : 0.5"/>
+                            </svg>
+                            <span class="ind-label">Status</span>
+                        </div>
+                        <div class="ind-value" :class="groupActive ? 'ind-glow-green' : 'ind-glow-red'">{{ groupActive ? 'ACTIVE' : 'IDLE' }}</div>
+                    </div>
+                    <!-- Members gauge -->
+                    <div class="ind-card ind-scanline p-4">
+                        <div class="flex items-center gap-2 mb-2">
+                            <svg width="14" height="14" viewBox="0 0 14 14"><rect x="2" y="4" width="10" height="7" rx="2" fill="none" stroke="#fbbf24" stroke-width="1.5" opacity="0.5"/><circle cx="7" cy="7" r="1.5" fill="#fbbf24" opacity="0.7"/></svg>
+                            <span class="ind-label">Members</span>
+                        </div>
+                        <div class="ind-value ind-glow-amber">{{ status.member_count || 0 }}</div>
+                    </div>
+                    <!-- Agent ID gauge -->
+                    <div class="ind-card ind-scanline p-4">
+                        <div class="flex items-center gap-2 mb-2">
+                            <svg width="14" height="14" viewBox="0 0 14 14"><rect x="1" y="3" width="12" height="8" rx="1.5" fill="none" stroke="#58a6ff" stroke-width="1" opacity="0.4"/><line x1="4" y1="6" x2="10" y2="6" stroke="#58a6ff" stroke-width="1" opacity="0.5"/><line x1="4" y1="8.5" x2="8" y2="8.5" stroke="#58a6ff" stroke-width="1" opacity="0.3"/></svg>
+                            <span class="ind-label">Agent</span>
+                        </div>
+                        <div class="text-xs font-medium text-gray-300 truncate" style="font-family: ui-monospace, monospace;">{{ status.agent_id || '---' }}</div>
+                    </div>
+                </div>
+
+                <!-- ===== STATS PANEL ===== -->
+                <div v-if="stats" class="ind-card ind-scanline p-5">
+                    <div class="flex items-center gap-2 mb-4">
+                        <svg width="16" height="16" viewBox="0 0 16 16">
+                            <rect x="1" y="9" width="3" height="6" rx="0.5" fill="#fbbf24" opacity="0.6"/>
+                            <rect x="5.5" y="5" width="3" height="10" rx="0.5" fill="#22c55e" opacity="0.6"/>
+                            <rect x="10" y="2" width="3" height="13" rx="0.5" fill="#58a6ff" opacity="0.6"/>
+                        </svg>
+                        <span class="ind-label" style="font-size: 10px; letter-spacing: 0.25em;">Performance Metrics</span>
+                    </div>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div>
+                            <div class="ind-label mb-1">Tasks (24h)</div>
+                            <div class="ind-value ind-glow-amber">{{ stats.tasks_last_24h || 0 }}</div>
+                        </div>
+                        <div>
+                            <div class="ind-label mb-1">Tasks (7d)</div>
+                            <div class="ind-value ind-glow-blue">{{ stats.tasks_last_7d || 0 }}</div>
+                        </div>
+                        <div>
+                            <div class="ind-label mb-1">Avg Response</div>
+                            <div class="ind-value ind-glow-green">{{ formatDuration(stats.avg_response_secs) }}</div>
+                        </div>
+                        <div>
+                            <div class="ind-label mb-1">Max Delegation</div>
+                            <div class="ind-value ind-glow-purple">{{ stats.max_delegation_depth || 0 }}</div>
                         </div>
                     </div>
-                    <div class="glass-card rounded-lg p-4">
-                        <div class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Members</div>
-                        <div class="text-lg font-bold text-amber-400">{{ status.member_count || 0 }}</div>
-                    </div>
-                    <div class="glass-card rounded-lg p-4">
-                        <div class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Agent ID</div>
-                        <div class="text-sm font-medium text-gray-300 truncate">{{ status.agent_id || '---' }}</div>
-                    </div>
+                    <!-- Mini pipe divider -->
+                    <div class="mt-4 ind-divider"></div>
                 </div>
 
-                <!-- Stats Cards -->
-                <div v-if="stats" class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div class="glass-card rounded-lg p-4">
-                        <div class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Tasks (24h)</div>
-                        <div class="text-lg font-bold text-amber-400">{{ stats.tasks_last_24h || 0 }}</div>
+                <!-- ===== PREVIOUS GROUPS ===== -->
+                <div v-if="!groupActive && previousMembers.length > 0" class="ind-card p-5">
+                    <div class="flex items-center gap-2 mb-4">
+                        <svg width="14" height="14" viewBox="0 0 14 14"><path d="M7 1 L13 7 L7 13 L1 7 Z" fill="none" stroke="#ff6b35" stroke-width="1.5" opacity="0.4"/></svg>
+                        <span class="ind-label" style="font-size: 10px; letter-spacing: 0.25em;">Previous Groups</span>
                     </div>
-                    <div class="glass-card rounded-lg p-4">
-                        <div class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Tasks (7d)</div>
-                        <div class="text-lg font-bold text-blue-400">{{ stats.tasks_last_7d || 0 }}</div>
-                    </div>
-                    <div class="glass-card rounded-lg p-4">
-                        <div class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Avg Response</div>
-                        <div class="text-lg font-bold text-green-400">{{ formatDuration(stats.avg_response_secs) }}</div>
-                    </div>
-                    <div class="glass-card rounded-lg p-4">
-                        <div class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Max Delegation</div>
-                        <div class="text-lg font-bold text-purple-400">{{ stats.max_delegation_depth || 0 }}</div>
-                    </div>
-                </div>
-
-                <!-- Previous Groups (when not active) -->
-                <div v-if="!groupActive && previousMembers.length > 0" class="glass-card rounded-lg p-4">
-                    <div class="text-xs text-gray-400 uppercase tracking-wider font-semibold mb-3">Previous Groups</div>
                     <div class="space-y-2">
-                        <div v-for="pm in previousMembers" :key="pm.agent_id" class="flex items-center justify-between bg-[#0d1117] rounded-lg p-3">
+                        <div v-for="pm in previousMembers" :key="pm.agent_id" class="flex items-center justify-between rounded-lg p-3" style="background: rgba(255,107,53,0.04); border: 1px solid rgba(255,107,53,0.1);">
                             <div>
-                                <div class="text-sm text-gray-300 font-medium">{{ pm.agent_name || pm.agent_id }}</div>
+                                <div class="text-sm text-gray-300 font-medium" style="font-family: ui-monospace, monospace;">{{ pm.agent_name || pm.agent_id }}</div>
                                 <div class="text-[10px] text-gray-600">Left {{ relativeTime(pm.left_at) }}</div>
                             </div>
                             <button @click="rejoinGroup(pm.agent_id)" class="btn-primary text-[10px]">REJOIN</button>
@@ -324,53 +470,95 @@
                     </div>
                 </div>
 
-                <!-- Health Indicators -->
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div class="glass-card rounded-lg p-4">
-                        <div class="flex items-center justify-between mb-3">
-                            <span class="text-xs text-gray-400 uppercase tracking-wider font-semibold">LFS Proxy</span>
-                            <div class="flex items-center gap-2">
-                                <div class="status-dot" :class="status.lfs_healthy ? 'status-active' : 'status-inactive'"></div>
-                                <span class="text-xs" :class="status.lfs_healthy ? 'text-green-400' : 'text-red-400'">
-                                    {{ status.lfs_healthy ? 'Reachable' : 'Down' }}
-                                </span>
-                            </div>
+                <!-- ===== HEALTH PIPELINE ===== -->
+                <div class="ind-card ind-scanline overflow-hidden">
+                    <!-- Pipe connecting LFS and Kafka -->
+                    <svg viewBox="0 0 900 80" style="width:100%; display:block;" xmlns="http://www.w3.org/2000/svg">
+                        <rect width="900" height="80" fill="#0a0e14"/>
+                        <!-- Horizontal pipe -->
+                        <rect x="60" y="32" width="780" height="16" rx="8" fill="#161b22"/>
+                        <rect x="60" y="32" width="780" height="16" rx="8" fill="none" stroke="#21262d" stroke-width="1"/>
+                        <!-- Pipe shine -->
+                        <rect x="62" y="33" width="776" height="5" rx="2.5" fill="white" opacity="0.03"/>
+
+                        <!-- LFS section (left) -->
+                        <circle cx="160" cy="40" r="14" fill="#22c55e" :opacity="status.lfs_healthy ? 0.12 : 0.05"/>
+                        <circle cx="160" cy="40" r="10" fill="#0a0e14"/>
+                        <circle cx="160" cy="40" r="4" :fill="status.lfs_healthy ? '#22c55e' : '#ef4444'" :opacity="status.lfs_healthy ? 0.9 : 0.5">
+                            <animate v-if="status.lfs_healthy" attributeName="r" values="3.5;4.5;3.5" dur="2.5s" repeatCount="indefinite"/>
+                        </circle>
+                        <text x="160" y="67" text-anchor="middle" fill="#8b949e" font-size="9" letter-spacing="0.15em" style="font-family: ui-monospace, monospace;">LFS PROXY</text>
+
+                        <!-- Kafka section (center-right) -->
+                        <circle cx="450" cy="40" r="14" fill="#58a6ff" :opacity="groupActive ? 0.12 : 0.05"/>
+                        <circle cx="450" cy="40" r="10" fill="#0a0e14"/>
+                        <circle cx="450" cy="40" r="4" :fill="groupActive ? '#58a6ff' : '#374151'" :opacity="groupActive ? 0.9 : 0.5">
+                            <animate v-if="groupActive" attributeName="r" values="3.5;4.5;3.5" dur="2.5s" repeatCount="indefinite" begin="0.8s"/>
+                        </circle>
+                        <text x="450" y="67" text-anchor="middle" fill="#8b949e" font-size="9" letter-spacing="0.15em" style="font-family: ui-monospace, monospace;">KAFKA</text>
+
+                        <!-- Agent section (right) -->
+                        <circle cx="740" cy="40" r="14" fill="#ff6b35" :opacity="groupActive ? 0.12 : 0.05"/>
+                        <circle cx="740" cy="40" r="10" fill="#0a0e14"/>
+                        <circle cx="740" cy="40" r="4" :fill="groupActive ? '#ff6b35' : '#374151'" :opacity="groupActive ? 0.9 : 0.5">
+                            <animate v-if="groupActive" attributeName="r" values="3.5;4.5;3.5" dur="2.5s" repeatCount="indefinite" begin="1.6s"/>
+                        </circle>
+                        <text x="740" y="67" text-anchor="middle" fill="#8b949e" font-size="9" letter-spacing="0.15em" style="font-family: ui-monospace, monospace;">AGENT</text>
+
+                        <!-- Flow bubbles (only when healthy) -->
+                        <circle v-if="status.lfs_healthy && groupActive" r="3" fill="#22c55e" opacity="0.5">
+                            <animateMotion dur="4s" repeatCount="indefinite" path="M160,40 L450,40"/>
+                        </circle>
+                        <circle v-if="groupActive" r="3" fill="#58a6ff" opacity="0.5">
+                            <animateMotion dur="4s" repeatCount="indefinite" begin="1.5s" path="M450,40 L740,40"/>
+                        </circle>
+
+                        <!-- Status text below pipe -->
+                        <text x="160" y="16" text-anchor="middle" :fill="status.lfs_healthy ? '#22c55e' : '#ef4444'" font-size="8" letter-spacing="0.1em" style="font-family: ui-monospace, monospace;">{{ status.lfs_healthy ? 'REACHABLE' : 'DOWN' }}</text>
+                        <text x="450" y="16" text-anchor="middle" :fill="groupActive ? '#58a6ff' : '#6b7280'" font-size="8" letter-spacing="0.1em" style="font-family: ui-monospace, monospace;">{{ groupActive ? 'CONNECTED' : 'DISCONNECTED' }}</text>
+                        <text x="740" y="16" text-anchor="middle" :fill="groupActive ? '#ff6b35' : '#6b7280'" font-size="8" letter-spacing="0.1em" style="font-family: ui-monospace, monospace;">{{ groupActive ? 'ACTIVE' : 'STANDBY' }}</text>
+                    </svg>
+                    <!-- URL details -->
+                    <div class="flex gap-4 px-5 py-3" style="background: rgba(13,17,23,0.5); border-top: 1px solid rgba(48,54,61,0.3);">
+                        <div class="flex-1">
+                            <span class="ind-label">LFS Endpoint</span>
+                            <div class="text-[11px] text-gray-500 truncate mt-0.5" style="font-family: ui-monospace, monospace;">{{ status.lfs_proxy_url || 'not configured' }}</div>
                         </div>
-                        <div class="text-[11px] text-gray-500 truncate">{{ status.lfs_proxy_url || 'not configured' }}</div>
-                    </div>
-                    <div class="glass-card rounded-lg p-4">
-                        <div class="flex items-center justify-between mb-3">
-                            <span class="text-xs text-gray-400 uppercase tracking-wider font-semibold">Kafka</span>
-                            <div class="flex items-center gap-2">
-                                <div class="status-dot" :class="groupActive ? 'status-active' : 'status-inactive'"></div>
-                                <span class="text-xs" :class="groupActive ? 'text-green-400' : 'text-gray-500'">
-                                    {{ groupActive ? 'Connected' : 'Disconnected' }}
-                                </span>
-                            </div>
+                        <div class="flex-1">
+                            <span class="ind-label">Kafka Brokers</span>
+                            <div class="text-[11px] text-gray-500 truncate mt-0.5" style="font-family: ui-monospace, monospace;">{{ config.kafka_brokers || 'not configured' }}</div>
                         </div>
-                        <div class="text-[11px] text-gray-500">{{ config.kafka_brokers || 'not configured' }}</div>
                     </div>
                 </div>
 
-                <!-- Quick Join -->
-                <div v-if="!groupActive" class="glass-card rounded-lg p-6">
-                    <div class="text-xs text-gray-400 uppercase tracking-wider font-semibold mb-4">Quick Join</div>
+                <!-- ===== QUICK JOIN (control panel) ===== -->
+                <div v-if="!groupActive" class="ind-card p-6">
+                    <div class="flex items-center gap-3 mb-4">
+                        <svg width="20" height="20" viewBox="0 0 20 20">
+                            <circle cx="10" cy="10" r="8" fill="none" stroke="#ff6b35" stroke-width="1.5" opacity="0.3"/>
+                            <line x1="10" y1="6" x2="10" y2="14" stroke="#ff6b35" stroke-width="2" opacity="0.6"/>
+                            <line x1="6" y1="10" x2="14" y2="10" stroke="#ff6b35" stroke-width="2" opacity="0.6"/>
+                        </svg>
+                        <span class="ind-label" style="font-size: 11px; letter-spacing: 0.25em; color: #ff6b35;">Quick Join</span>
+                    </div>
                     <div class="flex gap-3">
-                        <input v-model="quickJoinName" class="input-field flex-1" placeholder="Group name..." @keyup.enter="quickJoin">
-                        <button @click="quickJoin" :disabled="!quickJoinName.trim() || joining" class="btn-primary">
+                        <input v-model="quickJoinName" class="input-field flex-1" style="border-color: rgba(255,107,53,0.2); background: rgba(10,14,20,0.8);" placeholder="Group name..." @keyup.enter="quickJoin">
+                        <button @click="quickJoin" :disabled="!quickJoinName.trim() || joining" class="btn-primary" style="min-width: 100px;">
                             {{ joining ? 'JOINING...' : 'JOIN' }}
                         </button>
                     </div>
                 </div>
 
-                <!-- Decentralized Notice -->
-                <div class="glass-card rounded-lg p-4 border-amber-900/30">
+                <!-- ===== DECENTRALIZED NOTICE (industrial warning) ===== -->
+                <div class="ind-card p-4" style="border-color: rgba(251,191,36,0.15);">
                     <div class="flex items-start gap-3">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-amber-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        <svg width="20" height="20" viewBox="0 0 20 20" class="shrink-0 mt-0.5">
+                            <polygon points="10,2 19,17 1,17" fill="none" stroke="#fbbf24" stroke-width="1.5" opacity="0.5"/>
+                            <line x1="10" y1="8" x2="10" y2="12" stroke="#fbbf24" stroke-width="1.5" opacity="0.6"/>
+                            <circle cx="10" cy="14.5" r="1" fill="#fbbf24" opacity="0.6"/>
                         </svg>
                         <div>
-                            <div class="text-xs text-amber-400 font-semibold mb-1">Decentralized View</div>
+                            <div class="text-xs font-semibold mb-1" style="color: #fbbf24; font-family: ui-monospace, monospace; letter-spacing: 0.1em;">DECENTRALIZED VIEW</div>
                             <div class="text-[11px] text-gray-500 leading-relaxed">
                                 This is your agent's local view of the group. Each agent maintains its own roster
                                 based on Kafka announcements and heartbeats. Member status is eventually consistent.
@@ -557,6 +745,14 @@
                             <div v-if="expandedLocalTrace === lt.trace_id" class="px-3 pb-3 space-y-2">
                                 <div v-if="localTraceLoading" class="text-[10px] text-gray-500 py-2">Loading trace...</div>
                                 <template v-else>
+                                    <!-- Trace actions -->
+                                    <div class="flex justify-end">
+                                        <button @click.stop="copyLocalTraceJson(lt.trace_id)"
+                                            class="text-[10px] px-2 py-0.5 rounded bg-gray-700 hover:bg-gray-600 text-white transition-colors"
+                                            :class="{ 'bg-green-700 hover:bg-green-600': localTraceJsonCopied }">
+                                            {{ localTraceJsonCopied ? 'Copied!' : 'Copy JSON' }}
+                                        </button>
+                                    </div>
                                     <!-- Span pipeline -->
                                     <div v-if="localTraceSpans.length > 0" class="flex flex-wrap gap-1 items-center py-1">
                                         <template v-for="(span, si) in localTraceSpans" :key="si">
@@ -765,91 +961,229 @@
                 <!-- Section A: Chemical Factory Pipe Visualization -->
                 <div class="max-w-7xl mx-auto">
                     <div class="flex items-center justify-between mb-3">
-                        <div class="text-xs text-gray-400 uppercase tracking-wider font-semibold">Topic Factory</div>
-                        <div class="flex items-center gap-4 text-[10px] text-gray-500">
-                            <span><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:#58a6ff"></span>Control</span>
-                            <span><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:#fbbf24"></span>Tasks</span>
-                            <span><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:#a855f7"></span>Observe</span>
-                            <span><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:#22c55e"></span>Memory</span>
-                            <span><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:#f472b6"></span>Skill</span>
-                            <span><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:#ff6b35"></span>Agent</span>
+                        <div class="flex items-center gap-3">
+                            <div class="text-xs text-gray-300 uppercase tracking-wider font-bold">Topic Factory</div>
+                            <div class="flex items-center gap-1.5 text-[10px]">
+                                <span class="px-2 py-0.5 rounded-full bg-amber-900/30 text-amber-400 border border-amber-800/30">{{ factoryContentPipes.length }} content</span>
+                                <span class="text-gray-600">+</span>
+                                <span class="px-2 py-0.5 rounded-full bg-blue-900/30 text-blue-400 border border-blue-800/30">{{ factoryInfraPipes.length }} infra</span>
+                                <span class="text-gray-600">=</span>
+                                <span class="px-2 py-0.5 rounded-full bg-gray-800 text-gray-300 font-bold">{{ allFactoryTopics.length }}</span>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-3 text-[10px] text-gray-500">
+                            <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full" style="background:#58a6ff; box-shadow: 0 0 4px #58a6ff80"></span>Control</span>
+                            <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full" style="background:#fbbf24; box-shadow: 0 0 4px #fbbf2480"></span>Tasks</span>
+                            <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full" style="background:#a855f7; box-shadow: 0 0 4px #a855f780"></span>Observe</span>
+                            <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full" style="background:#22c55e; box-shadow: 0 0 4px #22c55e80"></span>Memory</span>
+                            <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full" style="background:#f472b6; box-shadow: 0 0 4px #f472b680"></span>Skill</span>
+                            <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full" style="background:#ff6b35; box-shadow: 0 0 4px #ff6b3580"></span>Agent</span>
                         </div>
                     </div>
-                    <div class="glass-card rounded-xl overflow-hidden" style="background: #0a0e14;">
-                        <svg :viewBox="'0 0 1200 ' + factorySvgHeight" style="width:100%; height:auto;" xmlns="http://www.w3.org/2000/svg">
-                            <!-- Sky background -->
-                            <rect x="0" y="0" :width="1200" :height="factorySvgHeight" class="factory-sky"/>
+                    <div class="glass-card rounded-xl" style="background: #060a10; overflow: visible;">
+                        <svg :viewBox="'0 0 1160 ' + factorySvgHeight" :style="'width:100%; min-height:' + Math.max(630, factorySvgHeight * 0.975) + 'px;'" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+                            <!-- Defs: glow filters, gradients, clip paths -->
+                            <defs>
+                                <filter id="pipe-glow" x="-20%" y="-50%" width="140%" height="200%">
+                                    <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur"/>
+                                    <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                                </filter>
+                                <filter id="pipe-glow-strong" x="-20%" y="-80%" width="140%" height="260%">
+                                    <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur"/>
+                                    <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                                </filter>
+                                <filter id="bubble-blur" x="-50%" y="-50%" width="200%" height="200%">
+                                    <feGaussianBlur in="SourceGraphic" stdDeviation="1.5"/>
+                                </filter>
+                                <linearGradient id="sky-grad" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="0%" stop-color="#0c1220"/>
+                                    <stop offset="100%" stop-color="#060a10"/>
+                                </linearGradient>
+                                <linearGradient id="pipe-shine" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="0%" stop-color="white" stop-opacity="0.18"/>
+                                    <stop offset="40%" stop-color="white" stop-opacity="0.02"/>
+                                    <stop offset="100%" stop-color="black" stop-opacity="0.12"/>
+                                </linearGradient>
+                                <linearGradient id="liquid-shine" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="0%" stop-color="white" stop-opacity="0.25"/>
+                                    <stop offset="100%" stop-color="white" stop-opacity="0"/>
+                                </linearGradient>
+                                <!-- Conveyor belt pattern for separator -->
+                                <pattern id="conveyor-pattern" x="0" y="0" width="24" height="8" patternUnits="userSpaceOnUse">
+                                    <rect width="24" height="8" fill="#161b22"/>
+                                    <rect x="2" y="2" width="8" height="4" rx="1" fill="#21262d"/>
+                                    <rect x="14" y="2" width="8" height="4" rx="1" fill="#21262d"/>
+                                </pattern>
+                            </defs>
 
-                            <!-- Content level label -->
-                            <text x="20" y="55" class="level-label">Content</text>
+                            <!-- Sky background with gradient -->
+                            <rect x="0" y="0" :width="1160" :height="factorySvgHeight" fill="url(#sky-grad)"/>
 
-                            <!-- Content pipes (elevated — tasks, memory, skill) -->
+                            <!-- Subtle grid lines for depth -->
+                            <line v-for="gy in 8" :key="'grid-'+gy" x1="120" :y1="gy * 40 + 20" x2="1080" :y2="gy * 40 + 20"
+                                stroke="#1a1f2b" stroke-width="0.5" opacity="0.4"/>
+
+                            <!-- Content level label with accent line -->
+                            <line x1="20" y1="52" x2="110" y2="52" stroke="#fbbf24" stroke-width="2" opacity="0.4"/>
+                            <text x="20" y="46" class="level-label" fill="#fbbf24" opacity="0.8">Content</text>
+
+                            <!-- Content pipes -->
                             <template v-for="(pipe, idx) in factoryContentPipes" :key="'cp-'+pipe.name">
-                                <g @click="onPipeClick(pipe, $event)">
-                                    <rect class="pipe-body" :x="120" :y="pipe.y" :width="960" :height="pipe.thickness" :rx="pipe.thickness/2"
-                                        :fill="pipe.color" :opacity="pipe.stale ? 0.25 : 0.7"/>
-                                    <rect v-if="pipe.stale" :x="120" :y="pipe.y" :width="960" :height="pipe.thickness" :rx="pipe.thickness/2"
-                                        fill="none" :stroke="pipe.color" stroke-width="1" stroke-dasharray="6 4" opacity="0.5"/>
-                                    <text class="pipe-label" :x="115" :y="pipe.y + pipe.thickness/2 + 3" text-anchor="end">{{ pipe.shortName }}</text>
-                                    <text class="pipe-count" :x="1090" :y="pipe.y + pipe.thickness/2 + 3">{{ pipe.msgCount }}</text>
-                                    <!-- Animated particles for active pipes -->
-                                    <template v-if="!pipe.stale">
-                                        <circle v-for="p in pipe.particles" :key="p" :r="pipe.thickness/3" :fill="pipe.color" opacity="0.9">
-                                            <animateMotion :dur="(3 + p * 0.7) + 's'" repeatCount="indefinite" :begin="(p * 1.1) + 's'"
-                                                :path="'M120,' + (pipe.y + pipe.thickness/2) + ' L1080,' + (pipe.y + pipe.thickness/2)" />
-                                        </circle>
-                                    </template>
+                                <g @click="onPipeClick(pipe, $event)" style="cursor:pointer">
+                                    <!-- Glow underlayer (active pipes get stronger glow) -->
+                                    <rect class="pipe-glow" :x="118" :y="pipe.y - 3" :width="964" :height="pipe.thickness + 6" :rx="(pipe.thickness+6)/2"
+                                        :fill="pipe.color" :opacity="pipe.stale ? 0.06 : 0.15" :filter="pipe.stale ? 'url(#pipe-glow)' : (pipe.msgCount > 10 ? 'url(#pipe-glow-strong)' : 'url(#pipe-glow)')"/>
+                                    <!-- Pipe outer casing (dark border ring) -->
+                                    <rect :x="119" :y="pipe.y - 1" :width="962" :height="pipe.thickness + 2" :rx="(pipe.thickness+2)/2"
+                                        fill="#0d1117" :opacity="pipe.stale ? 0.4 : 0.5"/>
+                                    <!-- Main pipe body — solid color for ALL pipes -->
+                                    <rect class="pipe-body" :class="pipe.stale ? 'pipe-idle' : ''" :x="120" :y="pipe.y" :width="960" :height="pipe.thickness" :rx="pipe.thickness/2"
+                                        :fill="pipe.color" :opacity="pipe.stale ? 0.4 : 0.75"/>
+                                    <!-- 3D shine gradient overlay -->
+                                    <rect :x="120" :y="pipe.y" :width="960" :height="pipe.thickness" :rx="pipe.thickness/2"
+                                        fill="url(#pipe-shine)" :opacity="pipe.stale ? 0.5 : 0.8"/>
+                                    <!-- Inner liquid fill (proportional to message count) -->
+                                    <rect :x="126" :y="pipe.y + pipe.thickness * 0.3" :width="948 * pipe.liquidLevel" :height="pipe.thickness * 0.4" :rx="pipe.thickness/5"
+                                        :fill="pipe.color" :opacity="pipe.stale ? 0.25 : 0.5"/>
+                                    <!-- Left valve connector -->
+                                    <circle class="valve-ring" :cx="120" :cy="pipe.y + pipe.thickness/2" :r="pipe.thickness/2 + 4" :fill="pipe.color" :opacity="pipe.stale ? 0.25 : 0.5"/>
+                                    <circle :cx="120" :cy="pipe.y + pipe.thickness/2" :r="pipe.thickness/2 + 2" fill="#0d1117" opacity="0.6"/>
+                                    <circle :cx="120" :cy="pipe.y + pipe.thickness/2" r="3" :fill="pipe.stale ? '#374151' : pipe.color" :opacity="pipe.stale ? 0.6 : 0.9">
+                                        <animate v-if="!pipe.stale" attributeName="r" values="2.5;3.5;2.5" dur="2s" repeatCount="indefinite"/>
+                                    </circle>
+                                    <!-- Right valve connector -->
+                                    <circle class="valve-ring" :cx="1080" :cy="pipe.y + pipe.thickness/2" :r="pipe.thickness/2 + 4" :fill="pipe.color" :opacity="pipe.stale ? 0.25 : 0.5"/>
+                                    <circle :cx="1080" :cy="pipe.y + pipe.thickness/2" :r="pipe.thickness/2 + 2" fill="#0d1117" opacity="0.6"/>
+                                    <circle :cx="1080" :cy="pipe.y + pipe.thickness/2" r="3" :fill="pipe.stale ? '#374151' : pipe.color" :opacity="pipe.stale ? 0.6 : 0.9">
+                                        <animate v-if="!pipe.stale" attributeName="r" values="2.5;3.5;2.5" dur="2s" repeatCount="indefinite" begin="0.5s"/>
+                                    </circle>
+                                    <!-- Flowing bubbles — ALL pipes get them -->
+                                    <circle v-for="p in pipe.particles" :key="p" :r="Math.max(2, pipe.thickness/4)" :fill="pipe.color"
+                                        :opacity="pipe.stale ? 0.3 : 0.8" :filter="pipe.stale ? 'url(#bubble-blur)' : 'url(#pipe-glow)'">
+                                        <animateMotion :dur="pipe.stale ? (10 + p * 3) + 's' : (2.5 + p * 0.8) + 's'" repeatCount="indefinite"
+                                            :begin="(p * 1.5) + 's'"
+                                            :path="'M120,' + (pipe.y + pipe.thickness/2) + ' L1080,' + (pipe.y + pipe.thickness/2)"/>
+                                    </circle>
+                                    <!-- Left label -->
+                                    <text class="pipe-label" :x="106" :y="pipe.y + pipe.thickness/2 + 4" text-anchor="end" :fill="pipe.color" :opacity="pipe.stale ? 0.55 : 1">{{ pipe.shortName }}</text>
+                                    <!-- Right count badge -->
+                                    <rect class="pipe-count-bg" :x="1090" :y="pipe.y + pipe.thickness/2 - 7" width="38" height="14" rx="7"/>
+                                    <text class="pipe-count" :x="1094" :y="pipe.y + pipe.thickness/2 + 3" :fill="pipe.msgCount > 0 ? pipe.color : '#4b5563'">{{ pipe.msgCount }}</text>
+                                    <!-- Pressure indicator (traffic light dot) -->
+                                    <circle class="pressure-dot" :class="!pipe.stale && pipe.msgCount > 0 ? 'pressure-active' : ''" :cx="1136" :cy="pipe.y + pipe.thickness/2" r="4"
+                                        :fill="pipe.stale ? '#374151' : (pipe.msgCount > 10 ? '#22c55e' : pipe.msgCount > 0 ? '#fbbf24' : '#6b7280')"/>
                                 </g>
                             </template>
 
-                            <!-- Support stilts -->
-                            <line v-for="sx in [200, 400, 600, 800, 1000]" :key="'stilt-'+sx"
-                                :x1="sx" :y1="factoryStiltTop" :x2="sx" :y2="factoryGroundY - 20"
-                                class="support-stilt"/>
-                            <line :x1="180" :y1="factoryStiltTop" :x2="1020" :y2="factoryStiltTop"
-                                class="support-stilt"/>
+                            <!-- Structural separator: conveyor belt / factory floor -->
+                            <rect x="120" :y="factoryStiltTop" width="960" height="8" fill="url(#conveyor-pattern)" rx="2" opacity="0.7"/>
+                            <line :x1="120" :y1="factoryStiltTop" :x2="1080" :y2="factoryStiltTop"
+                                stroke="#30363d" stroke-width="1" opacity="0.6"/>
+                            <line :x1="120" :y1="factoryStiltTop + 8" :x2="1080" :y2="factoryStiltTop + 8"
+                                stroke="#30363d" stroke-width="1" opacity="0.6"/>
+                            <!-- Support stilts with bolts -->
+                            <g v-for="sx in [250, 500, 750, 1000]" :key="'stilt-'+sx">
+                                <line :x1="sx" :y1="factoryStiltTop + 8" :x2="sx" :y2="factoryInfraLabelY - 12"
+                                    stroke="#21262d" stroke-width="3" opacity="0.5"/>
+                                <circle :cx="sx" :cy="factoryStiltTop + 4" r="3" fill="#30363d" opacity="0.8"/>
+                                <circle :cx="sx" :cy="factoryInfraLabelY - 14" r="3" fill="#30363d" opacity="0.8"/>
+                            </g>
 
-                            <!-- Infra level label -->
-                            <text x="20" :y="factoryInfraLabelY" class="level-label">Infra</text>
+                            <!-- Infra level label with accent line -->
+                            <line x1="20" :y1="factoryInfraLabelY - 2" x2="110" :y2="factoryInfraLabelY - 2" stroke="#58a6ff" stroke-width="2" opacity="0.4"/>
+                            <text x="20" :y="factoryInfraLabelY - 8" class="level-label" fill="#58a6ff" opacity="0.8">Infra</text>
 
-                            <!-- Infra pipes (ground level — control, observe) -->
+                            <!-- Infra pipes -->
                             <template v-for="(pipe, idx) in factoryInfraPipes" :key="'ip-'+pipe.name">
-                                <g @click="onPipeClick(pipe, $event)">
-                                    <rect class="pipe-body" :x="120" :y="pipe.y" :width="960" :height="pipe.thickness" :rx="pipe.thickness/2"
-                                        :fill="pipe.color" :opacity="pipe.stale ? 0.25 : 0.7"/>
-                                    <rect v-if="pipe.stale" :x="120" :y="pipe.y" :width="960" :height="pipe.thickness" :rx="pipe.thickness/2"
-                                        fill="none" :stroke="pipe.color" stroke-width="1" stroke-dasharray="6 4" opacity="0.5"/>
-                                    <text class="pipe-label" :x="115" :y="pipe.y + pipe.thickness/2 + 3" text-anchor="end">{{ pipe.shortName }}</text>
-                                    <text class="pipe-count" :x="1090" :y="pipe.y + pipe.thickness/2 + 3">{{ pipe.msgCount }}</text>
-                                    <template v-if="!pipe.stale">
-                                        <circle v-for="p in pipe.particles" :key="p" :r="pipe.thickness/3" :fill="pipe.color" opacity="0.9">
-                                            <animateMotion :dur="(3 + p * 0.7) + 's'" repeatCount="indefinite" :begin="(p * 1.1) + 's'"
-                                                :path="'M120,' + (pipe.y + pipe.thickness/2) + ' L1080,' + (pipe.y + pipe.thickness/2)" />
-                                        </circle>
-                                    </template>
+                                <g @click="onPipeClick(pipe, $event)" style="cursor:pointer">
+                                    <!-- Glow underlayer -->
+                                    <rect class="pipe-glow" :x="118" :y="pipe.y - 3" :width="964" :height="pipe.thickness + 6" :rx="(pipe.thickness+6)/2"
+                                        :fill="pipe.color" :opacity="pipe.stale ? 0.06 : 0.15" :filter="pipe.stale ? 'url(#pipe-glow)' : (pipe.msgCount > 10 ? 'url(#pipe-glow-strong)' : 'url(#pipe-glow)')"/>
+                                    <!-- Pipe outer casing -->
+                                    <rect :x="119" :y="pipe.y - 1" :width="962" :height="pipe.thickness + 2" :rx="(pipe.thickness+2)/2"
+                                        fill="#0d1117" :opacity="pipe.stale ? 0.4 : 0.5"/>
+                                    <!-- Main pipe body — solid color for ALL pipes -->
+                                    <rect class="pipe-body" :class="pipe.stale ? 'pipe-idle' : ''" :x="120" :y="pipe.y" :width="960" :height="pipe.thickness" :rx="pipe.thickness/2"
+                                        :fill="pipe.color" :opacity="pipe.stale ? 0.4 : 0.75"/>
+                                    <!-- 3D shine gradient overlay -->
+                                    <rect :x="120" :y="pipe.y" :width="960" :height="pipe.thickness" :rx="pipe.thickness/2"
+                                        fill="url(#pipe-shine)" :opacity="pipe.stale ? 0.5 : 0.8"/>
+                                    <!-- Inner liquid fill -->
+                                    <rect :x="126" :y="pipe.y + pipe.thickness * 0.3" :width="948 * pipe.liquidLevel" :height="pipe.thickness * 0.4" :rx="pipe.thickness/5"
+                                        :fill="pipe.color" :opacity="pipe.stale ? 0.25 : 0.5"/>
+                                    <!-- Left valve connector -->
+                                    <circle class="valve-ring" :cx="120" :cy="pipe.y + pipe.thickness/2" :r="pipe.thickness/2 + 4" :fill="pipe.color" :opacity="pipe.stale ? 0.25 : 0.5"/>
+                                    <circle :cx="120" :cy="pipe.y + pipe.thickness/2" :r="pipe.thickness/2 + 2" fill="#0d1117" opacity="0.6"/>
+                                    <circle :cx="120" :cy="pipe.y + pipe.thickness/2" r="3" :fill="pipe.stale ? '#374151' : pipe.color" :opacity="pipe.stale ? 0.6 : 0.9">
+                                        <animate v-if="!pipe.stale" attributeName="r" values="2.5;3.5;2.5" dur="2s" repeatCount="indefinite"/>
+                                    </circle>
+                                    <!-- Right valve connector -->
+                                    <circle class="valve-ring" :cx="1080" :cy="pipe.y + pipe.thickness/2" :r="pipe.thickness/2 + 4" :fill="pipe.color" :opacity="pipe.stale ? 0.25 : 0.5"/>
+                                    <circle :cx="1080" :cy="pipe.y + pipe.thickness/2" :r="pipe.thickness/2 + 2" fill="#0d1117" opacity="0.6"/>
+                                    <circle :cx="1080" :cy="pipe.y + pipe.thickness/2" r="3" :fill="pipe.stale ? '#374151' : pipe.color" :opacity="pipe.stale ? 0.6 : 0.9">
+                                        <animate v-if="!pipe.stale" attributeName="r" values="2.5;3.5;2.5" dur="2s" repeatCount="indefinite" begin="0.5s"/>
+                                    </circle>
+                                    <!-- Flowing bubbles — ALL pipes get them -->
+                                    <circle v-for="p in pipe.particles" :key="p" :r="Math.max(2, pipe.thickness/4)" :fill="pipe.color"
+                                        :opacity="pipe.stale ? 0.3 : 0.8" :filter="pipe.stale ? 'url(#bubble-blur)' : 'url(#pipe-glow)'">
+                                        <animateMotion :dur="pipe.stale ? (10 + p * 3) + 's' : (2.5 + p * 0.8) + 's'" repeatCount="indefinite"
+                                            :begin="(p * 1.5) + 's'"
+                                            :path="'M120,' + (pipe.y + pipe.thickness/2) + ' L1080,' + (pipe.y + pipe.thickness/2)"/>
+                                    </circle>
+                                    <!-- Left label -->
+                                    <text class="pipe-label" :x="106" :y="pipe.y + pipe.thickness/2 + 4" text-anchor="end" :fill="pipe.color" :opacity="pipe.stale ? 0.55 : 1">{{ pipe.shortName }}</text>
+                                    <!-- Right count badge -->
+                                    <rect class="pipe-count-bg" :x="1090" :y="pipe.y + pipe.thickness/2 - 7" width="38" height="14" rx="7"/>
+                                    <text class="pipe-count" :x="1094" :y="pipe.y + pipe.thickness/2 + 3" :fill="pipe.msgCount > 0 ? pipe.color : '#4b5563'">{{ pipe.msgCount }}</text>
+                                    <!-- Pressure indicator -->
+                                    <circle class="pressure-dot" :class="!pipe.stale && pipe.msgCount > 0 ? 'pressure-active' : ''" :cx="1136" :cy="pipe.y + pipe.thickness/2" r="4"
+                                        :fill="pipe.stale ? '#374151' : (pipe.msgCount > 10 ? '#22c55e' : pipe.msgCount > 0 ? '#fbbf24' : '#6b7280')"/>
                                 </g>
                             </template>
 
-                            <!-- Ground line -->
-                            <rect x="0" :y="factoryGroundY" width="1200" height="4" fill="#30363d" rx="2"/>
+                            <!-- Ground line — factory floor -->
+                            <rect x="100" :y="factoryGroundY" width="1000" height="6" fill="url(#conveyor-pattern)" rx="2" opacity="0.5"/>
+                            <line x1="100" :y1="factoryGroundY" x2="1100" :y2="factoryGroundY" stroke="#30363d" stroke-width="1" opacity="0.6"/>
+                            <line x1="100" :y1="factoryGroundY + 6" x2="1100" :y2="factoryGroundY + 6" stroke="#30363d" stroke-width="1" opacity="0.6"/>
 
                             <!-- Agent stations -->
                             <template v-for="(ag, idx) in factoryAgents" :key="'ag-'+ag.id">
                                 <g>
-                                    <!-- Vertical connector (dashed) -->
-                                    <line :x1="agentX(idx)" y1="40" :x2="agentX(idx)" :y2="factoryGroundY + 20"
-                                        stroke="#30363d" stroke-width="1" stroke-dasharray="3 3" opacity="0.4"/>
-                                    <!-- Junction dots on content pipes -->
+                                    <!-- Vertical connector pipe (solid, not dashed) -->
+                                    <line :x1="agentX(idx)" y1="50" :x2="agentX(idx)" :y2="factoryGroundY + 10"
+                                        stroke="#ff6b35" stroke-width="2" opacity="0.25"/>
+                                    <line :x1="agentX(idx)" y1="50" :x2="agentX(idx)" :y2="factoryGroundY + 10"
+                                        stroke="#ff6b35" stroke-width="1" opacity="0.4"/>
+                                    <!-- Junction dots on connected pipes (with valve ring) -->
                                     <template v-for="jp in agentJunctions(ag)" :key="'jn-'+ag.id+'-'+jp.name">
-                                        <circle :cx="agentX(idx)" :cy="jp.y + jp.thickness/2" r="4" :fill="jp.color" opacity="0.8"/>
+                                        <circle :cx="agentX(idx)" :cy="jp.y + jp.thickness/2" r="6" :fill="jp.color" opacity="0.2"/>
+                                        <circle :cx="agentX(idx)" :cy="jp.y + jp.thickness/2" r="4" fill="#0d1117" opacity="0.6"/>
+                                        <circle :cx="agentX(idx)" :cy="jp.y + jp.thickness/2" r="2.5" :fill="jp.color" opacity="0.9" filter="url(#pipe-glow)"/>
                                     </template>
-                                    <!-- Pump station -->
-                                    <rect :x="agentX(idx) - 18" :y="factoryGroundY + 16" width="36" height="24" rx="4"
-                                        fill="#ff6b35" opacity="0.8"/>
-                                    <circle :cx="agentX(idx)" :cy="factoryGroundY + 28" r="6" fill="#0d1117" opacity="0.6"/>
-                                    <circle :cx="agentX(idx)" :cy="factoryGroundY + 28" r="3" fill="#ff6b35"/>
+                                    <!-- Pump station (industrial look) -->
+                                    <rect :x="agentX(idx) - 26" :y="factoryGroundY + 10" width="52" height="34" rx="4"
+                                        fill="#ff6b35" opacity="0.15"/>
+                                    <rect :x="agentX(idx) - 24" :y="factoryGroundY + 11" width="48" height="32" rx="4"
+                                        fill="#0d1117" stroke="#ff6b35" stroke-width="1.5" opacity="0.8"/>
+                                    <!-- Spinning gear indicator -->
+                                    <circle :cx="agentX(idx)" :cy="factoryGroundY + 27" r="8" fill="none" stroke="#ff6b35" stroke-width="1.5" opacity="0.6">
+                                        <animateTransform attributeName="transform" type="rotate"
+                                            :values="'0 ' + agentX(idx) + ' ' + (factoryGroundY + 27) + ' 360 ' + agentX(idx) + ' ' + (factoryGroundY + 27)"
+                                            dur="8s" repeatCount="indefinite"/>
+                                    </circle>
+                                    <circle :cx="agentX(idx)" :cy="factoryGroundY + 27" r="4" fill="#ff6b35" opacity="0.8"/>
+                                    <circle :cx="agentX(idx)" :cy="factoryGroundY + 27" r="1.5" fill="#fcd34d"/>
+                                    <!-- Gear teeth (4 small rects around the gear) -->
+                                    <rect v-for="tooth in [0, 90, 180, 270]" :key="'tooth-'+ag.id+'-'+tooth"
+                                        :x="agentX(idx) - 1.5" :y="factoryGroundY + 27 - 10" width="3" height="4" rx="1"
+                                        fill="#ff6b35" opacity="0.5"
+                                        :transform="'rotate(' + tooth + ' ' + agentX(idx) + ' ' + (factoryGroundY + 27) + ')'">
+                                        <animateTransform attributeName="transform" type="rotate" additive="sum"
+                                            :values="'0 ' + agentX(idx) + ' ' + (factoryGroundY + 27) + ' 360 ' + agentX(idx) + ' ' + (factoryGroundY + 27)"
+                                            dur="8s" repeatCount="indefinite"/>
+                                    </rect>
                                     <!-- Agent label -->
-                                    <text class="agent-label" :x="agentX(idx)" :y="factoryGroundY + 54">{{ ag.shortName }}</text>
+                                    <text class="agent-label" :x="agentX(idx)" :y="factoryGroundY + 60" fill="#ff6b35">{{ ag.shortName }}</text>
                                 </g>
                             </template>
                         </svg>
@@ -896,40 +1230,7 @@
                     </template>
                 </div>
 
-                <!-- Section B: Gamification Bar -->
-                <div class="max-w-7xl mx-auto" v-if="xpLeaderboard.length > 0">
-                    <div class="text-xs text-gray-400 uppercase tracking-wider font-semibold mb-3">XP Leaderboard</div>
-                    <div class="flex gap-4 overflow-x-auto pb-2">
-                        <div v-for="(agent, idx) in xpLeaderboard" :key="agent.agent_id"
-                            class="glass-card rounded-lg p-4 min-w-[220px] flex-shrink-0">
-                            <div class="flex items-center gap-2 mb-2">
-                                <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold"
-                                    :style="{ background: getRankBg(agent.rank), color: getRankColor(agent.rank) }">
-                                    {{ idx + 1 }}
-                                </div>
-                                <div>
-                                    <div class="text-xs font-semibold text-white truncate" style="max-width:140px">{{ agent.agent_name || agent.agent_id }}</div>
-                                    <div class="text-[10px]" :class="'rank-' + agent.rank.toLowerCase()">{{ agent.rank }}</div>
-                                </div>
-                            </div>
-                            <div class="xp-bar mb-1">
-                                <div class="xp-fill" :style="{ width: getXPPercent(agent) + '%', background: getRankColor(agent.rank) }"></div>
-                            </div>
-                            <div class="flex items-center justify-between text-[10px] text-gray-500 mb-2">
-                                <span>Level {{ agent.level }}</span>
-                                <span>{{ agent.total_xp }} XP</span>
-                            </div>
-                            <div class="grid grid-cols-2 gap-1 text-[9px] text-gray-500">
-                                <span>Tasks: {{ agent.tasks_completed }}</span>
-                                <span>Traces: {{ agent.traces_shared }}</span>
-                                <span>Memory: {{ agent.memories_shared }}</span>
-                                <span>Skills: {{ agent.skills_registered }}</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Section C: Topic Registry -->
+                <!-- Section B: Topic Registry -->
                 <div class="max-w-7xl mx-auto">
                     <div class="flex items-center justify-between mb-3">
                         <div class="text-xs text-gray-400 uppercase tracking-wider font-semibold">Topic Registry</div>
@@ -1003,6 +1304,42 @@
                         </div>
                     </div>
                 </div>
+            </div>
+
+            <!-- Leaderboard Tab -->
+            <div v-if="activeTab === 'leaderboard'" class="max-w-5xl mx-auto space-y-6">
+                <div v-if="xpLeaderboard.length > 0">
+                    <div class="text-xs text-gray-400 uppercase tracking-wider font-semibold mb-3">XP Leaderboard</div>
+                    <div class="flex gap-4 overflow-x-auto pb-2">
+                        <div v-for="(agent, idx) in xpLeaderboard" :key="agent.agent_id"
+                            class="glass-card rounded-lg p-4 min-w-[220px] flex-shrink-0">
+                            <div class="flex items-center gap-2 mb-2">
+                                <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold"
+                                    :style="{ background: getRankBg(agent.rank), color: getRankColor(agent.rank) }">
+                                    {{ idx + 1 }}
+                                </div>
+                                <div>
+                                    <div class="text-xs font-semibold text-white truncate" style="max-width:140px">{{ agent.agent_name || agent.agent_id }}</div>
+                                    <div class="text-[10px]" :class="'rank-' + agent.rank.toLowerCase()">{{ agent.rank }}</div>
+                                </div>
+                            </div>
+                            <div class="xp-bar mb-1">
+                                <div class="xp-fill" :style="{ width: getXPPercent(agent) + '%', background: getRankColor(agent.rank) }"></div>
+                            </div>
+                            <div class="flex items-center justify-between text-[10px] text-gray-500 mb-2">
+                                <span>Level {{ agent.level }}</span>
+                                <span>{{ agent.total_xp }} XP</span>
+                            </div>
+                            <div class="grid grid-cols-2 gap-1 text-[9px] text-gray-500">
+                                <span>Tasks: {{ agent.tasks_completed }}</span>
+                                <span>Traces: {{ agent.traces_shared }}</span>
+                                <span>Memory: {{ agent.memories_shared }}</span>
+                                <span>Skills: {{ agent.skills_registered }}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div v-else class="text-center text-gray-500 text-sm py-12">No XP data yet. Activity in the group generates XP.</div>
             </div>
 
             <!-- Config Tab -->
@@ -1103,6 +1440,7 @@
                 { id: 'overview', label: 'Overview' },
                 { id: 'members', label: 'Members' },
                 { id: 'topics', label: 'Topics' },
+                { id: 'leaderboard', label: 'Leaderboard' },
                 { id: 'tasks', label: 'Tasks' },
                 { id: 'traces', label: 'Traces' },
                 { id: 'audit', label: 'Audit' },
@@ -1192,6 +1530,47 @@
             const localTracePolicy = ref([])
             const localTraceLoading = ref(false)
             const selectedLocalSpan = ref(null)
+            const localTraceJsonCopied = ref(false)
+
+            const copyLocalTraceJson = async (traceId) => {
+                const spans = localTraceSpans.value.map(s => ({
+                    type: s.type,
+                    time: s.time,
+                    duration: s.duration || '',
+                    title: s.title || s.type,
+                    metadata: s.metadata || {}
+                }))
+                const hasToolSpans = spans.some(s => s.type === 'TOOL')
+                const hasReadFile = spans.some(s => s.type === 'TOOL' && s.metadata && s.metadata.tool_name === 'read_file')
+                const task = localTraceTask.value
+                const exportObj = {
+                    trace_id: traceId || '',
+                    exported_at: new Date().toISOString(),
+                    spans,
+                    task: task ? {
+                        task_id: task.task_id,
+                        status: task.status,
+                        prompt_tokens: task.prompt_tokens,
+                        completion_tokens: task.completion_tokens,
+                        total_tokens: task.total_tokens,
+                        channel: task.channel || ''
+                    } : null,
+                    policy_decisions: localTracePolicy.value || [],
+                    analysis: {
+                        used_tools: hasToolSpans,
+                        data_source: hasReadFile ? 'file_read' : (hasToolSpans ? 'tool_assisted' : 'llm_context_only'),
+                        span_count: spans.length,
+                        llm_iterations: spans.filter(s => s.type === 'LLM').length
+                    }
+                }
+                try {
+                    await navigator.clipboard.writeText(JSON.stringify(exportObj, null, 2))
+                    localTraceJsonCopied.value = true
+                    setTimeout(() => { localTraceJsonCopied.value = false }, 2000)
+                } catch (e) {
+                    console.error('Failed to copy trace JSON', e)
+                }
+            }
 
             // Config form
             const configForm = reactive({ lfs_proxy_url: '', api_key: '', kafka_brokers: '', consumer_group: '', agent_id: '', poll_interval_ms: '' })
@@ -1543,9 +1922,16 @@
             // --- Factory pipe layout computations ---
             function buildPipe(topic, yPos) {
                 const mph = topic.health ? topic.health.messages_per_hour : 0
-                const thickness = Math.max(6, Math.min(24, 6 + Math.log2(mph + 1) * 4))
-                const stale = topic.health ? topic.health.is_stale : true
-                const particles = stale ? [] : Array.from({ length: Math.min(3, Math.max(1, Math.ceil(mph))) }, (_, i) => i)
+                const msgCount = topic.stats ? topic.stats.message_count : 0
+                // Thicker pipes — min 10px, scale with activity
+                const thickness = Math.max(10, Math.min(28, 10 + Math.log2(msgCount + 1) * 3 + Math.log2(mph + 1) * 3))
+                const stale = topic.health ? topic.health.is_stale : (msgCount === 0)
+                // ALL pipes get bubbles — stale = 1 slow idle bubble, active = 1-4 fast ones
+                const particles = stale
+                    ? [0]
+                    : Array.from({ length: Math.min(4, Math.max(1, Math.ceil(mph) + 1)) }, (_, i) => i)
+                // Liquid fill level: min 15% even for empty pipes (visual interest), max 95%
+                const liquidLevel = msgCount === 0 ? 0.15 : Math.min(0.95, 0.15 + Math.log2(msgCount + 1) * 0.1)
                 return {
                     name: topic.name,
                     shortName: (topic.name || '').split('.').slice(-1)[0],
@@ -1554,43 +1940,98 @@
                     y: yPos,
                     thickness,
                     stale,
-                    msgCount: topic.stats ? topic.stats.message_count : 0,
+                    msgCount,
                     particles,
+                    liquidLevel,
                     consumers: topic.consumers || [],
                 }
             }
 
+            // Dynamic category grouping: Content (tasks, memory, skill) + Infra (control, observe) + any others
+            const contentCategories = ['tasks', 'memory', 'skill']
+            const infraCategories = ['control', 'observe']
+
+            // Known core topic templates — keyed by short suffix so they match regardless of group name prefix
+            const coreTopicTemplates = [
+                { suffix: 'requests',           category: 'tasks',   description: 'General task requests' },
+                { suffix: 'responses',          category: 'tasks',   description: 'General task responses' },
+                { suffix: 'tasks.status',       category: 'tasks',   description: 'Task status updates' },
+                { suffix: 'memory.shared',      category: 'memory',  description: 'Shared memory items' },
+                { suffix: 'memory.context',     category: 'memory',  description: 'Ephemeral context sharing' },
+                { suffix: 'announce',           category: 'control', description: 'Join/leave/heartbeat' },
+                { suffix: 'control.roster',     category: 'control', description: 'Topic registry manifest' },
+                { suffix: 'control.onboarding', category: 'control', description: 'Agent onboarding protocol' },
+                { suffix: 'traces',             category: 'observe', description: 'Trace spans' },
+                { suffix: 'observe.audit',      category: 'observe', description: 'Administrative audit events' },
+                { suffix: 'orchestrator',       category: 'control', description: 'Orchestrator coordination' },
+            ]
+
+            // All topics: API data + guaranteed core topics (filled in if missing from API)
+            const allFactoryTopics = computed(() => {
+                const apiTopics = [...topicsData.value, ...skillTopicsData.value]
+                const byName = new Map()
+                apiTopics.forEach(t => byName.set(t.name, t))
+
+                // Determine group prefix from any existing topic name, or from group status
+                let prefix = ''
+                if (apiTopics.length > 0) {
+                    // e.g. "group.mygroup.requests" → "group.mygroup"
+                    const parts = apiTopics[0].name.split('.')
+                    if (parts.length >= 3) prefix = parts.slice(0, 2).join('.')
+                } else if (status.value && status.value.group_name) {
+                    prefix = 'group.' + status.value.group_name
+                }
+
+                // Ensure every core topic exists
+                if (prefix) {
+                    coreTopicTemplates.forEach(tmpl => {
+                        const fullName = prefix + '.' + tmpl.suffix
+                        if (!byName.has(fullName)) {
+                            byName.set(fullName, {
+                                name: fullName,
+                                category: tmpl.category,
+                                description: tmpl.description,
+                                consumers: [],
+                                stats: null,
+                                health: null,
+                            })
+                        }
+                    })
+                }
+
+                return Array.from(byName.values())
+            })
+
             const factoryContentPipes = computed(() => {
-                const allTopics = [...topicsData.value, ...skillTopicsData.value]
-                const content = allTopics.filter(t => ['tasks', 'memory', 'skill'].includes(t.category))
+                const content = allFactoryTopics.value.filter(t => contentCategories.includes(t.category))
                 const pipes = []
-                let y = 65
+                let y = 68
                 content.forEach(t => {
                     const p = buildPipe(t, y)
                     pipes.push(p)
-                    y += p.thickness + 10
+                    y += p.thickness + 14
                 })
                 return pipes
             })
 
             const factoryStiltTop = computed(() => {
                 const pipes = factoryContentPipes.value
-                if (pipes.length === 0) return 120
+                if (pipes.length === 0) return 140
                 const last = pipes[pipes.length - 1]
-                return last.y + last.thickness + 20
+                return last.y + last.thickness + 24
             })
 
-            const factoryInfraLabelY = computed(() => factoryStiltTop.value + 35)
+            const factoryInfraLabelY = computed(() => factoryStiltTop.value + 40)
 
             const factoryInfraPipes = computed(() => {
-                const allTopics = [...topicsData.value, ...skillTopicsData.value]
-                const infra = allTopics.filter(t => ['control', 'observe'].includes(t.category))
+                // Everything not in content goes to infra
+                const infra = allFactoryTopics.value.filter(t => !contentCategories.includes(t.category))
                 const pipes = []
-                let y = factoryInfraLabelY.value + 15
+                let y = factoryInfraLabelY.value + 18
                 infra.forEach(t => {
                     const p = buildPipe(t, y)
                     pipes.push(p)
-                    y += p.thickness + 10
+                    y += p.thickness + 14
                 })
                 return pipes
             })
@@ -1602,25 +2043,23 @@
                 return last.y + last.thickness + 30
             })
 
-            const factorySvgHeight = computed(() => factoryGroundY.value + 70)
+            const factorySvgHeight = computed(() => factoryGroundY.value + 80)
 
             const factoryAgents = computed(() => {
-                const seen = new Set()
+                const seenIds = new Set()
+                const seenNames = new Set()
                 const agents = []
+                const addAgent = (id, name) => {
+                    const shortName = (name || id).split('-').slice(-1)[0]
+                    if (seenIds.has(id) || seenNames.has(shortName)) return
+                    agents.push({ id, shortName })
+                    seenIds.add(id)
+                    seenNames.add(shortName)
+                }
                 // From XP leaderboard
-                xpLeaderboard.value.forEach(a => {
-                    if (!seen.has(a.agent_id)) {
-                        agents.push({ id: a.agent_id, shortName: (a.agent_name || a.agent_id).split('-').slice(-1)[0] })
-                        seen.add(a.agent_id)
-                    }
-                })
+                xpLeaderboard.value.forEach(a => addAgent(a.agent_id, a.agent_name))
                 // From members
-                members.value.forEach(m => {
-                    if (!seen.has(m.agent_id)) {
-                        agents.push({ id: m.agent_id, shortName: (m.agent_name || m.agent_id).split('-').slice(-1)[0] })
-                        seen.add(m.agent_id)
-                    }
-                })
+                members.value.forEach(m => addAgent(m.agent_id, m.agent_name))
                 return agents
             })
 
@@ -1761,6 +2200,9 @@
                     await loadTopicFlow()
                     await loadTopicHealth()
                 }
+                if (tab === 'leaderboard') {
+                    await loadTopics()
+                }
             })
 
             watch([taskFilter, taskStatusFilter], () => loadTasks())
@@ -1791,7 +2233,7 @@
                 taskDescription, taskContent, submittingTask, taskFilter, taskStatusFilter,
                 traceAgentFilter, traceAgents,
                 localTasks, expandedLocalTrace, localTraceSpans, localTraceTask,
-                localTracePolicy, localTraceLoading, expandLocalTrace, spanTypeColor, selectedLocalSpan,
+                localTracePolicy, localTraceLoading, expandLocalTrace, spanTypeColor, selectedLocalSpan, localTraceJsonCopied, copyLocalTraceJson,
                 configForm, savingConfig, configSaved, configRequiresRejoin,
                 joinForm,
                 // Topics
@@ -1799,7 +2241,7 @@
                 xpLeaderboard, topicCategoryFilter, selectedTopic, topicMessages,
                 filteredTopics,
                 // Factory pipe viz
-                factoryContentPipes, factoryInfraPipes, factoryStiltTop,
+                allFactoryTopics, factoryContentPipes, factoryInfraPipes, factoryStiltTop,
                 factoryInfraLabelY, factoryGroundY, factorySvgHeight,
                 factoryAgents, factorySelectedPipe, factoryPipePosition,
                 densityData, envelopeTypes, densityLoading, densityColor,

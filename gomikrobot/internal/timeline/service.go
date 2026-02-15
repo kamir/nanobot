@@ -1962,6 +1962,8 @@ func (s *TimelineService) GetAgentXP() ([]AgentXP, error) {
 		LEFT JOIN (SELECT source_agent_id, COUNT(*) cnt FROM group_traces GROUP BY source_agent_id) tr ON gm.agent_id = tr.source_agent_id
 		LEFT JOIN (SELECT author_id, COUNT(*) cnt FROM group_memory_items GROUP BY author_id) mem ON gm.agent_id = mem.author_id
 		LEFT JOIN (SELECT registered_by, COUNT(*) cnt FROM group_skill_channels GROUP BY registered_by) sk ON gm.agent_id = sk.registered_by
+		WHERE gm.left_at IS NULL
+		GROUP BY gm.agent_id
 		ORDER BY (COALESCE(tc.cnt,0)*10 + COALESCE(tr.cnt,0)*5 + COALESCE(mem.cnt,0)*15 + COALESCE(sk.cnt,0)*25) DESC`)
 	if err != nil {
 		return nil, err
