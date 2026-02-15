@@ -3,6 +3,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kamir/gomikrobot/internal/approval"
 	"github.com/kamir/gomikrobot/internal/bus"
 	"github.com/kamir/gomikrobot/internal/memory"
 	"github.com/kamir/gomikrobot/internal/policy"
@@ -20,10 +22,11 @@ import (
 	"github.com/kamir/gomikrobot/internal/tools"
 )
 
-// GroupTracePublisher can publish trace data to a group.
+// GroupTracePublisher can publish trace and audit data to a group.
 type GroupTracePublisher interface {
 	Active() bool
 	PublishTrace(ctx context.Context, payload interface{}) error
+	PublishAudit(ctx context.Context, eventType, traceID, detail string) error
 }
 
 // LoopOptions contains configuration for the agent loop.
@@ -50,6 +53,7 @@ type Loop struct {
 	policy         policy.Engine
 	memoryService  *memory.MemoryService
 	groupPublisher GroupTracePublisher
+	approvalMgr    *approval.Manager
 	registry       *tools.Registry
 	sessions       *session.Manager
 	contextBuilder *ContextBuilder
@@ -65,6 +69,7 @@ type Loop struct {
 	// activeSender tracks the sender of the current message (for policy checks).
 	activeSender      string
 	activeChannel     string
+	activeChatID      string
 	activeTraceID     string
 	activeMessageType string
 }
@@ -88,6 +93,7 @@ func NewLoop(opts LoopOptions) *Loop {
 		policy:         opts.Policy,
 		memoryService:  opts.MemoryService,
 		groupPublisher: opts.GroupPublisher,
+		approvalMgr:    approval.NewManager(opts.Timeline),
 		registry:       registry,
 		sessions:       session.NewManager(opts.Workspace),
 		contextBuilder: ctxBuilder,
@@ -136,6 +142,31 @@ func (l *Loop) Run(ctx context.Context) error {
 				return nil // Context cancelled, normal shutdown
 			}
 			slog.Error("Failed to consume message", "error", err)
+			continue
+		}
+
+		// Intercept approval responses (approve:<id> / deny:<id>)
+		if id, approved, ok := parseApprovalResponse(msg.Content); ok && l.approvalMgr != nil {
+			if err := l.approvalMgr.Respond(id, approved); err != nil {
+				slog.Warn("Approval response failed", "id", id, "error", err)
+				l.bus.PublishOutbound(&bus.OutboundMessage{
+					Channel: msg.Channel,
+					ChatID:  msg.ChatID,
+					TraceID: msg.TraceID,
+					Content: fmt.Sprintf("No pending approval found for ID %s.", id),
+				})
+			} else {
+				action := "denied"
+				if approved {
+					action = "approved"
+				}
+				l.bus.PublishOutbound(&bus.OutboundMessage{
+					Channel: msg.Channel,
+					ChatID:  msg.ChatID,
+					TraceID: msg.TraceID,
+					Content: fmt.Sprintf("Approval %s: %s.", id, action),
+				})
+			}
 			continue
 		}
 
@@ -849,6 +880,7 @@ func (l *Loop) processMessage(ctx context.Context, msg *bus.InboundMessage) (res
 	l.activeTaskID = taskID
 	l.activeSender = msg.SenderID
 	l.activeChannel = msg.Channel
+	l.activeChatID = msg.ChatID
 	l.activeTraceID = msg.TraceID
 	l.activeMessageType = msg.MessageType()
 
@@ -891,6 +923,7 @@ func (l *Loop) runAgentLoop(ctx context.Context, messages []provider.Message) (s
 		}
 
 		// Call LLM
+		llmStart := time.Now()
 		resp, err := l.provider.Chat(ctx, &provider.ChatRequest{
 			Messages:    messages,
 			Tools:       toolDefs,
@@ -898,12 +931,94 @@ func (l *Loop) runAgentLoop(ctx context.Context, messages []provider.Message) (s
 			MaxTokens:   4096,
 			Temperature: 0.7,
 		})
+		llmDuration := time.Since(llmStart)
 		if err != nil {
 			return "", fmt.Errorf("LLM call failed: %w", err)
 		}
 
 		// TOKEN TRACKING (H-013): record usage
 		l.trackTokens(resp.Usage)
+
+		// Build LLM span summary
+		toolCallSummary := ""
+		if len(resp.ToolCalls) > 0 {
+			names := make([]string, len(resp.ToolCalls))
+			for ti, tc := range resp.ToolCalls {
+				names[ti] = tc.Name
+			}
+			toolCallSummary = fmt.Sprintf(" → tools: %s", strings.Join(names, ", "))
+		}
+		llmContent := fmt.Sprintf("model=%s tokens=%d duration=%dms%s", l.model, resp.Usage.TotalTokens, llmDuration.Milliseconds(), toolCallSummary)
+
+		// Log LLM span to timeline for end-to-end trace visibility
+		if l.timeline != nil && l.activeTraceID != "" {
+			// Build rich metadata for LLM span
+			llmMeta := map[string]any{
+				"model":             l.model,
+				"temperature":       0.7,
+				"max_tokens":        4096,
+				"duration_ms":       llmDuration.Milliseconds(),
+				"finish_reason":     resp.FinishReason,
+				"prompt_tokens":     resp.Usage.PromptTokens,
+				"completion_tokens": resp.Usage.CompletionTokens,
+				"total_tokens":      resp.Usage.TotalTokens,
+				"response_text":     truncateStr(resp.Content, 10240),
+				"message_count":     len(messages),
+			}
+			// System prompt preview (first message if role=system)
+			if len(messages) > 0 && messages[0].Role == "system" {
+				llmMeta["system_prompt"] = truncateStr(messages[0].Content, 2048)
+			}
+			// Last user message
+			for j := len(messages) - 1; j >= 0; j-- {
+				if messages[j].Role == "user" {
+					llmMeta["last_user_message"] = truncateStr(messages[j].Content, 2048)
+					break
+				}
+			}
+			// Tool calls requested
+			if len(resp.ToolCalls) > 0 {
+				tcList := make([]map[string]any, len(resp.ToolCalls))
+				for ti, tc := range resp.ToolCalls {
+					tcList[ti] = map[string]any{
+						"name":      tc.Name,
+						"arguments": tc.Arguments,
+					}
+				}
+				llmMeta["tool_calls"] = tcList
+			}
+			llmMetaJSON, _ := json.Marshal(llmMeta)
+
+			_ = l.timeline.AddEvent(&timeline.TimelineEvent{
+				EventID:        fmt.Sprintf("LLM_%s_%d_%d", l.activeTraceID, i, time.Now().UnixNano()),
+				TraceID:        l.activeTraceID,
+				Timestamp:      llmStart,
+				SenderID:       "AGENT",
+				SenderName:     "LLM",
+				EventType:      "SYSTEM",
+				ContentText:    llmContent,
+				Classification: "LLM",
+				Authorized:     true,
+				Metadata:       string(llmMetaJSON),
+			})
+		}
+		// Publish LLM span to group traces topic
+		if l.groupPublisher != nil && l.groupPublisher.Active() && l.activeTraceID != "" {
+			go func(traceID, content string, dur time.Duration) {
+				pubCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				now := time.Now()
+				_ = l.groupPublisher.PublishTrace(pubCtx, map[string]string{
+					"trace_id":    traceID,
+					"span_type":   "LLM",
+					"title":       fmt.Sprintf("LLM call: %s", l.model),
+					"content":     content,
+					"started_at":  now.Add(-dur).Format(time.RFC3339),
+					"ended_at":    now.Format(time.RFC3339),
+					"duration_ms": fmt.Sprintf("%d", dur.Milliseconds()),
+				})
+			}(l.activeTraceID, llmContent, llmDuration)
+		}
 
 		// Check for tool calls
 		if len(resp.ToolCalls) == 0 {
@@ -921,7 +1036,7 @@ func (l *Loop) runAgentLoop(ctx context.Context, messages []provider.Message) (s
 		// Execute each tool call
 		for _, tc := range resp.ToolCalls {
 			// POLICY CHECK (H-011): evaluate before tool execution
-			if denied, reason := l.checkToolPolicy(tc.Name, tc.Arguments); denied {
+			if denied, reason := l.checkToolPolicy(ctx, tc.Name, tc.Arguments); denied {
 				slog.Warn("Tool denied by policy", "tool", tc.Name, "reason", reason)
 				messages = append(messages, provider.Message{
 					Role:       "tool",
@@ -931,9 +1046,58 @@ func (l *Loop) runAgentLoop(ctx context.Context, messages []provider.Message) (s
 				continue
 			}
 
+			toolStart := time.Now()
 			result, err := l.registry.Execute(ctx, tc.Name, tc.Arguments)
+			toolDuration := time.Since(toolStart)
 			if err != nil {
 				result = fmt.Sprintf("Error: %v", err)
+			}
+
+			// Log tool span to timeline for end-to-end trace visibility
+			toolContent := fmt.Sprintf("tool=%s duration=%dms result_len=%d", tc.Name, toolDuration.Milliseconds(), len(result))
+			if l.timeline != nil && l.activeTraceID != "" {
+				// Build rich metadata for TOOL span
+				toolMeta := map[string]any{
+					"tool_name":    tc.Name,
+					"tool_call_id": tc.ID,
+					"arguments":    tc.Arguments,
+					"duration_ms":  toolDuration.Milliseconds(),
+					"result":       truncateStr(result, 10240),
+				}
+				if err != nil {
+					toolMeta["error"] = err.Error()
+				}
+				toolMetaJSON, _ := json.Marshal(toolMeta)
+
+				_ = l.timeline.AddEvent(&timeline.TimelineEvent{
+					EventID:        fmt.Sprintf("TOOL_%s_%s_%d", l.activeTraceID, tc.Name, time.Now().UnixNano()),
+					TraceID:        l.activeTraceID,
+					Timestamp:      toolStart,
+					SenderID:       "AGENT",
+					SenderName:     "Tool",
+					EventType:      "SYSTEM",
+					ContentText:    toolContent,
+					Classification: "TOOL",
+					Authorized:     true,
+					Metadata:       string(toolMetaJSON),
+				})
+			}
+			// Publish tool span to group traces topic
+			if l.groupPublisher != nil && l.groupPublisher.Active() && l.activeTraceID != "" {
+				go func(traceID, toolN, content string, dur time.Duration) {
+					pubCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					defer cancel()
+					now := time.Now()
+					_ = l.groupPublisher.PublishTrace(pubCtx, map[string]string{
+						"trace_id":    traceID,
+						"span_type":   "TOOL",
+						"title":       fmt.Sprintf("Tool: %s", toolN),
+						"content":     content,
+						"started_at":  now.Add(-dur).Format(time.RFC3339),
+						"ended_at":    now.Format(time.RFC3339),
+						"duration_ms": fmt.Sprintf("%d", dur.Milliseconds()),
+					})
+				}(l.activeTraceID, tc.Name, toolContent, toolDuration)
 			}
 
 			if strings.Contains(result, "Ey, du spinnst wohl? Hä?") {
@@ -954,9 +1118,17 @@ func (l *Loop) runAgentLoop(ctx context.Context, messages []provider.Message) (s
 	return "Max iterations reached. Please try a simpler request.", nil
 }
 
+// truncateStr returns s trimmed to maxLen characters.
+func truncateStr(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen]
+}
+
 // checkToolPolicy evaluates whether a tool call should proceed.
 // Returns (denied bool, reason string).
-func (l *Loop) checkToolPolicy(toolName string, args map[string]any) (bool, string) {
+func (l *Loop) checkToolPolicy(ctx context.Context, toolName string, args map[string]any) (bool, string) {
 	if l.policy == nil {
 		return false, ""
 	}
@@ -966,7 +1138,7 @@ func (l *Loop) checkToolPolicy(toolName string, args map[string]any) (bool, stri
 		tier = tools.ToolTier(t)
 	}
 
-	ctx := policy.Context{
+	policyCtx := policy.Context{
 		Sender:      l.activeSender,
 		Channel:     l.activeChannel,
 		Tool:        toolName,
@@ -976,7 +1148,7 @@ func (l *Loop) checkToolPolicy(toolName string, args map[string]any) (bool, stri
 		MessageType: l.activeMessageType,
 	}
 
-	decision := l.policy.Evaluate(ctx)
+	decision := l.policy.Evaluate(policyCtx)
 
 	// Log policy decision (H-015)
 	if l.timeline != nil {
@@ -991,11 +1163,117 @@ func (l *Loop) checkToolPolicy(toolName string, args map[string]any) (bool, stri
 			Reason:  decision.Reason,
 		})
 	}
+	// Publish policy decision as audit event to group
+	if l.groupPublisher != nil && l.groupPublisher.Active() && l.activeTraceID != "" {
+		action := "ALLOW"
+		if !decision.Allow {
+			action = "DENY"
+		}
+		detail := fmt.Sprintf("tool=%s tier=%d sender=%s action=%s reason=%s", toolName, tier, l.activeSender, action, decision.Reason)
+		go func(traceID, det string) {
+			pubCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_ = l.groupPublisher.PublishAudit(pubCtx, "policy_decision", traceID, det)
+		}(l.activeTraceID, detail)
+	}
 
 	if !decision.Allow {
+		// Interactive approval gate for tier 2+ internal messages
+		if decision.RequiresApproval && l.approvalMgr != nil && l.bus != nil {
+			req := &approval.ApprovalRequest{
+				Tool:      toolName,
+				Tier:      tier,
+				Arguments: args,
+				Sender:    l.activeSender,
+				Channel: l.activeChannel,
+				TraceID: l.activeTraceID,
+				TaskID:  l.activeTaskID,
+			}
+			approvalID := l.approvalMgr.Create(req)
+
+			// Format and send prompt to user
+			argsPreview := formatArgsPreview(args)
+			prompt := fmt.Sprintf("Tool \"%s\" (tier %d) requires approval.\nArgs: %s\nReply approve:%s or deny:%s",
+				toolName, tier, argsPreview, approvalID, approvalID)
+
+			l.bus.PublishOutbound(&bus.OutboundMessage{
+				Channel: l.activeChannel,
+				ChatID:  l.activeChatID,
+				TraceID: l.activeTraceID,
+				TaskID:  l.activeTaskID,
+				Content: prompt,
+			})
+
+			// Block with configurable timeout (default 60s)
+			timeout := l.approvalTimeout()
+			waitCtx, waitCancel := context.WithTimeout(ctx, timeout)
+			defer waitCancel()
+
+			approved, err := l.approvalMgr.Wait(waitCtx, approvalID)
+			if err != nil {
+				slog.Warn("Approval wait failed", "id", approvalID, "error", err)
+				return true, "approval_timeout"
+			}
+			if approved {
+				return false, "" // Allow execution
+			}
+			return true, "approval_denied"
+		}
 		return true, decision.Reason
 	}
 	return false, ""
+}
+
+// parseApprovalResponse checks if a message is an approval response.
+// Returns (id, approved, ok).
+func parseApprovalResponse(content string) (string, bool, bool) {
+	trimmed := strings.TrimSpace(content)
+	if strings.HasPrefix(trimmed, "approve:") {
+		id := strings.TrimSpace(strings.TrimPrefix(trimmed, "approve:"))
+		if id != "" {
+			return id, true, true
+		}
+	}
+	if strings.HasPrefix(trimmed, "deny:") {
+		id := strings.TrimSpace(strings.TrimPrefix(trimmed, "deny:"))
+		if id != "" {
+			return id, false, true
+		}
+	}
+	return "", false, false
+}
+
+// formatArgsPreview returns a truncated JSON representation of tool arguments.
+func formatArgsPreview(args map[string]any) string {
+	if len(args) == 0 {
+		return "{}"
+	}
+	b, err := json.Marshal(args)
+	if err != nil {
+		return "{...}"
+	}
+	s := string(b)
+	if len(s) > 200 {
+		s = s[:200] + "..."
+	}
+	return s
+}
+
+// approvalTimeout returns the configured approval timeout duration.
+// Reads "approval_timeout_seconds" from settings, defaults to 60s.
+func (l *Loop) approvalTimeout() time.Duration {
+	if l.timeline == nil {
+		return 60 * time.Second
+	}
+	val, err := l.timeline.GetSetting("approval_timeout_seconds")
+	if err != nil || val == "" {
+		return 60 * time.Second
+	}
+	var seconds int
+	if _, err := fmt.Sscanf(val, "%d", &seconds); err != nil || seconds <= 0 {
+		return 60 * time.Second
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 // trackTokens persists token usage for the active task.

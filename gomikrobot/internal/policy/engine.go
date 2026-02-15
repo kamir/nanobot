@@ -21,11 +21,12 @@ type Context struct {
 
 // Decision is the result of a policy evaluation.
 type Decision struct {
-	Allow   bool
-	Reason  string
-	Tier    int
-	Ts      time.Time
-	TraceID string
+	Allow            bool
+	RequiresApproval bool // true when tier exceeds auto-approve but interactive approval is possible
+	Reason           string
+	Tier             int
+	Ts               time.Time
+	TraceID          string
 }
 
 // Engine evaluates whether a tool execution should proceed.
@@ -90,6 +91,7 @@ func (e *DefaultEngine) Evaluate(ctx Context) Decision {
 		if ctx.MessageType == "external" {
 			d.Reason = fmt.Sprintf("tier_%d_denied_for_external_message", ctx.Tier)
 		} else {
+			d.RequiresApproval = true
 			d.Reason = fmt.Sprintf("tier_%d_requires_approval", ctx.Tier)
 		}
 		return d

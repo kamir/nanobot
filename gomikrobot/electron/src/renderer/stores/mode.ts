@@ -6,7 +6,12 @@ type AppMode = 'full' | 'standalone' | 'remote' | ''
 declare global {
   interface Window {
     electronAPI?: {
-      mode: { get: () => Promise<string>; set: (mode: string) => Promise<string> }
+      mode: {
+        get: () => Promise<string>
+        set: (mode: string) => Promise<string>
+        activate: (mode: string) => Promise<{ ok: boolean; error?: string }>
+        reset: () => Promise<{ ok: boolean; error?: string }>
+      }
       sidecar: {
         getStatus: () => Promise<string>
         getLogs: () => Promise<string[]>
@@ -22,6 +27,7 @@ declare global {
         verify: (conn: any) => Promise<{ ok: boolean; error?: string; data?: any }>
         setActive: (id: string) => Promise<boolean>
         getActive: () => Promise<any>
+        connect: (connId: string) => Promise<{ ok: boolean; error?: string }>
       }
     }
   }
@@ -33,7 +39,7 @@ export const useModeStore = defineStore('mode', () => {
 
   const modeLabel = computed(() => {
     switch (currentMode.value) {
-      case 'full': return 'Full Desktop'
+      case 'full': return 'Group Master Desktop'
       case 'standalone': return 'Standalone'
       case 'remote': return 'Remote'
       default: return ''
@@ -59,9 +65,6 @@ export const useModeStore = defineStore('mode', () => {
     currentMode.value = mode
     if (window.electronAPI) {
       await window.electronAPI.mode.set(mode)
-      if (mode === 'full' || mode === 'standalone') {
-        await window.electronAPI.sidecar.start(mode)
-      }
     }
   }
 

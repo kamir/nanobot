@@ -50,11 +50,16 @@ jobs:
         with:
           path: dist
 
-      - name: Inspect dist
-        run: ls -R dist
+      - name: Prepare release files
+        run: |
+          mkdir -p release_files
+          find dist -type f -name "gomikrobot*" -exec cp {} release_files/ \;
+          ls -R release_files
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/**/*
+            release_files/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

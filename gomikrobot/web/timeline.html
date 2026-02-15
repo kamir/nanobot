@@ -137,8 +137,17 @@
         <header class="glass z-10 shadow-lg">
             <!-- Top Tier: Brand, Panel Orbs, Utilities -->
             <div class="px-4 py-2.5 flex items-center justify-between">
-                <!-- Brand + Status -->
+                <!-- Breadcrumb Nav + Brand + Status -->
                 <div class="flex items-center gap-3">
+                    <!-- Back: Mode Selector -->
+                    <a href="javascript:void(0)" @click="switchMode" class="flex items-center gap-1.5 text-gray-500 hover:text-blue-400 transition-colors text-xs">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+                        </svg>
+                        Mode
+                    </a>
+                    <div class="w-px h-5 bg-gray-700"></div>
+                    <!-- Current: Timeline -->
                     <div class="w-3 h-3 rounded-full animate-pulse" :class="silentMode ? 'bg-yellow-500' : 'bg-green-500'"></div>
                     <h1 class="text-xl font-bold text-white tracking-widest">QMD <span class="text-blue-400">MEMORY</span></h1>
                     <div class="flex items-center gap-2 ml-2 px-3 py-1 rounded-lg border transition-all duration-300"
@@ -156,6 +165,21 @@
                             </div>
                         </label>
                     </div>
+                    <template v-if="appMode !== 'standalone'">
+                        <div class="w-px h-5 bg-gray-700"></div>
+                        <!-- Forward: Approvals -->
+                        <a href="/approvals" class="flex items-center gap-1.5 text-gray-500 hover:text-amber-400 transition-colors text-xs">
+                            Approvals
+                        </a>
+                        <div class="w-px h-5 bg-gray-700"></div>
+                        <!-- Forward: Group -->
+                        <a href="/group" class="flex items-center gap-1.5 text-gray-500 hover:text-amber-400 transition-colors text-xs">
+                            Group
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+                            </svg>
+                        </a>
+                    </template>
                 </div>
 
                 <!-- Panel Orbs -->
@@ -235,7 +259,7 @@
                     </button>
 
                     <!-- Group Orb -->
-                    <div v-if="groupStatus.active" class="relative group" @click="toggleGroupPanel">
+                    <div v-if="appMode !== 'standalone' && groupStatus.active" class="relative group" @click="toggleGroupPanel">
                         <div class="w-9 h-9 rounded-full flex items-center justify-center group-icon transition-all duration-300"
                             :class="{ active: groupPanelVisible }">
                             <span class="text-xs font-bold text-black">G</span>
@@ -299,16 +323,6 @@
                         </svg>
                     </button>
 
-                    <div class="w-px h-5 bg-gray-700"></div>
-
-                    <!-- Refresh -->
-                    <button @click="refreshAll" title="Refresh" class="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 transition-colors">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24"
-                            stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                        </svg>
-                    </button>
                 </div>
             </div>
 
@@ -1093,63 +1107,133 @@
                             channel: <span class="text-gray-200">{{ traceMeta.channel }}</span>
                         </div>
                     </div>
-                    <!-- Spans list / Graph toggle -->
-                    <div v-if="traceViewMode === 'list'" class="p-4 space-y-3 overflow-y-auto" style="max-height: calc(100% - 200px);">
-                        <div v-for="span in traceSpans" :key="span.id"
-                            class="border border-gray-700 rounded p-2 hover:border-blue-500 cursor-pointer"
-                            :class="selectedSpan && selectedSpan.id === span.id ? 'bg-[#0d1117]' : ''"
-                            @click="selectedSpan = span">
-                            <div class="flex items-center justify-between">
-                                <span class="text-[10px] uppercase" :class="span.color">{{ span.type }}</span>
-                                <span class="text-[10px] text-gray-500">{{ span.time }}</span>
+                    <!-- Spans pipeline / Graph toggle -->
+                    <div v-if="traceViewMode === 'list'" class="p-4 space-y-3 overflow-y-auto" style="max-height: calc(100% - 120px);">
+                        <!-- Horizontal span pipeline (matches group.html) -->
+                        <div v-if="traceSpans.length > 0" class="flex flex-wrap gap-1 items-center py-1">
+                            <template v-for="(span, si) in traceSpans" :key="span.id">
+                                <div class="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-semibold cursor-pointer transition-all"
+                                    :style="{ background: spanTypeColorHex(span.type) + (selectedSpan && selectedSpan.id === span.id ? '40' : '20'), color: spanTypeColorHex(span.type), border: '2px solid ' + spanTypeColorHex(span.type) + (selectedSpan && selectedSpan.id === span.id ? 'cc' : '40') }"
+                                    @click="selectedSpan = (selectedSpan && selectedSpan.id === span.id) ? null : span">
+                                    {{ span.type }}
+                                    <span class="text-[9px] opacity-60">{{ span.time }}</span>
+                                    <span v-if="span.duration" class="text-[9px] opacity-40">{{ span.duration }}</span>
+                                </div>
+                                <svg v-if="si < traceSpans.length - 1" class="h-3 w-3 text-gray-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+                                </svg>
+                            </template>
+                        </div>
+                        <div v-else class="text-[10px] text-gray-600 italic">No spans recorded for this trace</div>
+
+                        <!-- Rich span detail panel -->
+                        <div v-if="selectedSpan" class="bg-[#0d1117] rounded p-3 text-[10px] text-gray-400 space-y-2 border border-gray-800">
+                            <!-- LLM detail -->
+                            <template v-if="selectedSpan.type === 'LLM' && selectedSpan.metadata">
+                                <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-gray-500">
+                                    <span>Model: <span class="text-purple-400">{{ selectedSpan.metadata.model }}</span></span>
+                                    <span>Temp: <span class="text-gray-400">{{ selectedSpan.metadata.temperature }}</span></span>
+                                    <span>Max Tokens: <span class="text-gray-400">{{ selectedSpan.metadata.max_tokens }}</span></span>
+                                    <span>Duration: <span class="text-gray-400">{{ selectedSpan.metadata.duration_ms }}ms</span></span>
+                                    <span>Prompt Tokens: <span class="text-blue-400">{{ selectedSpan.metadata.prompt_tokens }}</span></span>
+                                    <span>Completion Tokens: <span class="text-green-400">{{ selectedSpan.metadata.completion_tokens }}</span></span>
+                                    <span>Total Tokens: <span class="text-yellow-400">{{ selectedSpan.metadata.total_tokens }}</span></span>
+                                    <span>Finish: <span class="text-gray-400">{{ selectedSpan.metadata.finish_reason }}</span></span>
+                                </div>
+                                <div v-if="selectedSpan.metadata.system_prompt" class="space-y-1">
+                                    <div class="text-[9px] text-gray-600 uppercase font-semibold">System Prompt</div>
+                                    <pre class="whitespace-pre-wrap max-h-32 overflow-y-auto bg-[#161b22] rounded p-2 text-gray-500 text-[10px]">{{ selectedSpan.metadata.system_prompt }}</pre>
+                                </div>
+                                <div v-if="selectedSpan.metadata.last_user_message" class="space-y-1">
+                                    <div class="text-[9px] text-gray-600 uppercase font-semibold">Last User Message</div>
+                                    <pre class="whitespace-pre-wrap max-h-32 overflow-y-auto bg-[#161b22] rounded p-2 text-blue-400/80 text-[10px]">{{ selectedSpan.metadata.last_user_message }}</pre>
+                                </div>
+                                <div v-if="selectedSpan.metadata.response_text" class="space-y-1">
+                                    <div class="text-[9px] text-gray-600 uppercase font-semibold">LLM Response</div>
+                                    <pre class="whitespace-pre-wrap max-h-32 overflow-y-auto bg-[#161b22] rounded p-2 text-green-400/80 text-[10px]">{{ selectedSpan.metadata.response_text }}</pre>
+                                </div>
+                                <div v-if="selectedSpan.metadata.tool_calls && selectedSpan.metadata.tool_calls.length > 0" class="space-y-1">
+                                    <div class="text-[9px] text-gray-600 uppercase font-semibold">Tool Calls Requested</div>
+                                    <div v-for="(tc, tci) in selectedSpan.metadata.tool_calls" :key="tci" class="bg-[#161b22] rounded p-2 space-y-1">
+                                        <span class="text-orange-400 font-semibold">{{ tc.name }}</span>
+                                        <pre class="whitespace-pre-wrap max-h-24 overflow-y-auto text-gray-500 text-[10px]">{{ JSON.stringify(tc.arguments, null, 2) }}</pre>
+                                    </div>
+                                </div>
+                            </template>
+                            <!-- TOOL detail -->
+                            <template v-else-if="selectedSpan.type === 'TOOL' && selectedSpan.metadata">
+                                <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-gray-500">
+                                    <span>Tool: <span class="text-orange-400 font-semibold">{{ selectedSpan.metadata.tool_name }}</span></span>
+                                    <span>Duration: <span class="text-gray-400">{{ selectedSpan.metadata.duration_ms }}ms</span></span>
+                                </div>
+                                <div v-if="selectedSpan.metadata.arguments" class="space-y-1">
+                                    <div class="text-[9px] text-gray-600 uppercase font-semibold">Arguments</div>
+                                    <pre class="whitespace-pre-wrap max-h-32 overflow-y-auto bg-[#161b22] rounded p-2 text-blue-400/80 text-[10px]">{{ JSON.stringify(selectedSpan.metadata.arguments, null, 2) }}</pre>
+                                </div>
+                                <div v-if="selectedSpan.metadata.result" class="space-y-1">
+                                    <div class="text-[9px] text-gray-600 uppercase font-semibold">Result</div>
+                                    <pre class="whitespace-pre-wrap max-h-32 overflow-y-auto bg-[#161b22] rounded p-2 text-green-400/80 text-[10px]">{{ selectedSpan.metadata.result }}</pre>
+                                </div>
+                                <div v-if="selectedSpan.metadata.error" class="space-y-1">
+                                    <div class="text-[9px] text-gray-600 uppercase font-semibold">Error</div>
+                                    <pre class="whitespace-pre-wrap bg-[#161b22] rounded p-2 text-red-400 text-[10px]">{{ selectedSpan.metadata.error }}</pre>
+                                </div>
+                            </template>
+                            <!-- INBOUND detail -->
+                            <template v-else-if="selectedSpan.type === 'INBOUND' && selectedSpan.metadata">
+                                <div class="grid grid-cols-3 gap-x-4 gap-y-1 text-gray-500">
+                                    <span>Channel: <span class="text-blue-400">{{ selectedSpan.metadata.channel }}</span></span>
+                                    <span>Sender: <span class="text-gray-400">{{ selectedSpan.metadata.sender }}</span></span>
+                                    <span>Type: <span class="text-gray-400">{{ selectedSpan.metadata.message_type }}</span></span>
+                                </div>
+                                <div v-if="selectedSpan.metadata.content" class="space-y-1">
+                                    <div class="text-[9px] text-gray-600 uppercase font-semibold">Message Content</div>
+                                    <pre class="whitespace-pre-wrap max-h-32 overflow-y-auto bg-[#161b22] rounded p-2 text-blue-400/80 text-[10px]">{{ selectedSpan.metadata.content }}</pre>
+                                </div>
+                            </template>
+                            <!-- OUTBOUND detail -->
+                            <template v-else-if="selectedSpan.type === 'OUTBOUND'">
+                                <div v-if="selectedSpan.metadata" class="grid grid-cols-2 gap-x-4 gap-y-1 text-gray-500">
+                                    <span>Delivery: <span class="text-green-400">{{ selectedSpan.metadata.delivery_status }}</span></span>
+                                </div>
+                                <div v-if="selectedSpan.metadata && selectedSpan.metadata.response_text" class="space-y-1">
+                                    <div class="text-[9px] text-gray-600 uppercase font-semibold">Response Text</div>
+                                    <pre class="whitespace-pre-wrap max-h-32 overflow-y-auto bg-[#161b22] rounded p-2 text-green-400/80 text-[10px]">{{ selectedSpan.metadata.response_text }}</pre>
+                                </div>
+                            </template>
+                            <!-- Fallback -->
+                            <div v-else class="text-gray-600 italic">No detailed metadata available for this span</div>
+                        </div>
+
+                        <!-- Task metadata grid -->
+                        <div v-if="traceTaskInfo" class="bg-[#0d1117] rounded p-2 text-[10px] text-gray-500 grid grid-cols-3 gap-x-4 gap-y-1">
+                            <span>Task: <span class="text-gray-400">{{ traceTaskInfo.task_id }}</span></span>
+                            <span>Status: <span class="font-bold"
+                                :class="{
+                                    'text-yellow-400': traceTaskInfo.status === 'pending',
+                                    'text-blue-400': traceTaskInfo.status === 'processing',
+                                    'text-green-400': traceTaskInfo.status === 'completed',
+                                    'text-red-400': traceTaskInfo.status === 'failed'
+                                }">{{ traceTaskInfo.status }}</span></span>
+                            <span>Delivery: <span class="text-gray-400">{{ traceTaskInfo.delivery_status }}</span></span>
+                            <span>Prompt: <span class="text-gray-400">{{ traceTaskInfo.prompt_tokens }}</span></span>
+                            <span>Completion: <span class="text-gray-400">{{ traceTaskInfo.completion_tokens }}</span></span>
+                            <span>Total: <span class="text-gray-400">{{ traceTaskInfo.total_tokens }}</span></span>
+                        </div>
+
+                        <!-- Policy decision pills -->
+                        <div v-if="tracePolicyDecisions && tracePolicyDecisions.length > 0" class="flex flex-wrap gap-1">
+                            <div v-for="(pd, pi) in tracePolicyDecisions" :key="pi"
+                                class="text-[9px] px-2 py-0.5 rounded"
+                                :class="pd.allowed ? 'bg-green-900/20 text-green-400 border border-green-800/30' : 'bg-red-900/20 text-red-400 border border-red-800/30'">
+                                {{ pd.tool }} T{{ pd.tier }} {{ pd.allowed ? 'ALLOW' : 'DENY' }}
+                                <span v-if="pd.reason" class="opacity-60">({{ pd.reason }})</span>
                             </div>
-                            <div class="text-xs text-gray-200">{{ span.title }}</div>
                         </div>
                     </div>
                     <!-- Trace Graph View -->
-                    <div v-if="traceViewMode === 'graph'" class="trace-graph-container" style="height: calc(100% - 200px);">
+                    <div v-if="traceViewMode === 'graph'" class="trace-graph-container" style="height: calc(100% - 120px);">
                         <svg ref="traceGraphSvg"></svg>
-                    </div>
-                    <!-- Details -->
-                    <div class="p-4 border-t border-gray-800 overflow-y-auto" style="max-height: 280px;">
-                        <div class="text-[10px] uppercase text-gray-500 mb-1">Span Details</div>
-                        <div class="text-xs text-gray-300">
-                            <div>Type: <span class="text-gray-200">{{ selectedSpan?.type || '-' }}</span></div>
-                            <div>Name: <span class="text-gray-200">{{ selectedSpan?.title || '-' }}</span></div>
-                            <div>Duration: <span class="text-gray-200">{{ selectedSpan?.duration || '-' }}</span></div>
-                            <div>Output: <span class="text-gray-200">{{ selectedSpan?.output || '-' }}</span></div>
-                        </div>
-
-                        <!-- Task Info -->
-                        <div v-if="traceTaskInfo" class="mt-3">
-                            <div class="text-[10px] uppercase text-cyan-400 mb-1">Task</div>
-                            <div class="grid grid-cols-2 gap-1 text-xs text-gray-300">
-                                <div>Status: <span class="font-bold"
-                                    :class="{
-                                        'text-yellow-400': traceTaskInfo.status === 'pending',
-                                        'text-blue-400': traceTaskInfo.status === 'processing',
-                                        'text-green-400': traceTaskInfo.status === 'completed',
-                                        'text-red-400': traceTaskInfo.status === 'failed'
-                                    }">{{ traceTaskInfo.status }}</span></div>
-                                <div>Delivery: <span class="text-gray-200">{{ traceTaskInfo.delivery_status }}</span></div>
-                                <div>Tokens: <span class="text-gray-200">{{ traceTaskInfo.prompt_tokens }}p + {{ traceTaskInfo.completion_tokens }}c = {{ traceTaskInfo.total_tokens }}</span></div>
-                                <div>Channel: <span class="text-gray-200">{{ traceTaskInfo.channel }}</span></div>
-                            </div>
-                        </div>
-
-                        <!-- Policy Decisions -->
-                        <div v-if="tracePolicyDecisions && tracePolicyDecisions.length" class="mt-3">
-                            <div class="text-[10px] uppercase text-orange-400 mb-1">Policy Decisions ({{ tracePolicyDecisions.length }})</div>
-                            <div v-for="pd in tracePolicyDecisions" :key="pd.tool + pd.time"
-                                class="flex items-center gap-2 text-xs py-0.5">
-                                <span class="w-2 h-2 rounded-full" :class="pd.allowed ? 'bg-green-500' : 'bg-red-500'"></span>
-                                <span class="text-gray-200">{{ pd.tool }}</span>
-                                <span class="text-[10px] text-gray-500">tier {{ pd.tier }}</span>
-                                <span class="text-[10px]" :class="pd.allowed ? 'text-green-400' : 'text-red-400'">{{ pd.allowed ? 'allowed' : 'denied' }}</span>
-                                <span v-if="pd.reason" class="text-[10px] text-gray-600">({{ pd.reason }})</span>
-                                <span class="ml-auto text-[10px] text-gray-600">{{ pd.time }}</span>
-                            </div>
-                        </div>
                     </div>
                     <!-- Resize handle -->
                     <div v-if="traceFloating"
@@ -1161,7 +1245,7 @@
             </div>
 
             <!-- Group Panel -->
-            <div v-if="groupPanelVisible" class="fixed inset-0 z-50 flex items-center justify-center" @click.self="groupPanelVisible = false">
+            <div v-if="appMode !== 'standalone' && groupPanelVisible" class="fixed inset-0 z-50 flex items-center justify-center" @click.self="groupPanelVisible = false">
                 <div class="glass rounded-xl border border-gray-700 overflow-hidden shadow-2xl" style="width: 500px; max-width: 92vw; height: 500px; max-height: 80vh;">
                     <div class="p-4 border-b border-gray-800 bg-[#0d1117]/90 backdrop-blur">
                         <div class="flex items-center justify-between">
@@ -1315,6 +1399,7 @@
                 const traceFloating = ref(false)
                 const traceViewMode = ref('list')
                 const traceGraphSvg = ref(null)
+                const appMode = ref('')
                 const groupPanelVisible = ref(false)
                 const groupStatus = ref({ active: false, group_name: '', member_count: 0, lfs_healthy: false })
                 const groupMembers = ref([])
@@ -1445,6 +1530,11 @@
                     if (e.event_type === 'SYSTEM') return 'bg-blue-500'
                     if (!e.authorized) return 'bg-yellow-500' // Unauthorized indicator
                     return 'bg-green-500'
+                }
+
+                const spanTypeColorHex = (type) => {
+                    const m = { INBOUND: '#58a6ff', LLM: '#a855f7', TOOL: '#fb923c', OUTBOUND: '#22c55e', POLICY: '#ef4444' }
+                    return m[type] || '#6366f1'
                 }
 
                 const fetchData = async () => {
@@ -1831,6 +1921,16 @@
                     await fetchData()
                     await loadRepoOptions()
                     await refreshRepo()
+                }
+
+                // Mode switching — works in Electron (via IPC) and browser (via navigation)
+                const switchMode = async () => {
+                    if (window.electronAPI && window.electronAPI.mode && window.electronAPI.mode.reset) {
+                        await window.electronAPI.mode.reset()
+                    } else {
+                        // Browser fallback: just reload
+                        window.location.reload()
+                    }
                 }
 
                 const loadRepoTree = async () => {
@@ -2416,13 +2516,14 @@
                         tracePolicyDecisions.value = []
                         const res = await fetch(`/api/v1/trace/${encodeURIComponent(traceId)}`)
                         const data = await res.json()
-                        const spans = (data.spans || []).map((s) => ({
+                        const spans = (data.spans || []).sort((a, b) => a.time.localeCompare(b.time)).map((s) => ({
                             id: s.id,
                             type: s.type,
                             title: s.title,
                             time: s.time,
-                            duration: s.duration || "-",
-                            output: s.output || "-",
+                            duration: s.duration || "",
+                            output: s.output || "",
+                            metadata: s.metadata || null,
                             color: s.type === "INBOUND" ? "text-blue-400"
                                 : s.type === "OUTBOUND" ? "text-green-400"
                                 : s.type === "LLM" ? "text-purple-400"
@@ -2430,7 +2531,7 @@
                                 : "text-gray-400",
                         }))
                         traceSpans.value = spans
-                        selectedSpan.value = spans[0] || null
+                        selectedSpan.value = null
                         // Load task info and policy decisions from enriched trace response
                         if (data.task) traceTaskInfo.value = data.task
                         if (data.policy_decisions) tracePolicyDecisions.value = data.policy_decisions
@@ -2735,6 +2836,7 @@
                     refreshRepo()
                     setInterval(fetchData, 5000)
                     setInterval(refreshRepo, 5000)
+                    fetch('/api/v1/status').then(r => r.json()).then(d => { appMode.value = d.mode || '' }).catch(() => {})
                     loadGroupStatus()
                     setInterval(loadGroupStatus, 30000)
                     window.addEventListener('mousemove', onRepoMouseMove)
@@ -2887,7 +2989,7 @@
                 }
                 const bothPanelsVisible = computed(() => identityPanelVisible.value && repoPanelVisible.value)
 
-                return { events, filteredEvents, selectedUser, authFilter, silentMode, toggleSilent, senders, isBot, isTechnical, getDotClass, fetchData, formatTime, getMediaUrl, isDimmed, isImage, isAudio, isDocument, docIcon, docIconClass, docExt, webUsers, selectedWebUserId, newWebUserName, linkJid, webChatMessage, webStatus, systemCopyStatus, forceSend, showTechnical, loadWebUsers, createWebUser, loadWebLink, saveWebLink, unlinkWebLink, sendWebChat, saveForceSend, copyWebChat, copyMessage, copyMessageSystem, reprocessMessage, clipboardOpen, clipboardItems, clipboardSelected, toggleClipboard, selectAllClipboard, clearClipboard, deleteSelectedClipboard, copySelectedClipboard, removeClipboardItem, workRepoPath, loadWorkRepo, saveWorkRepo, pickWorkRepo, repoOptions, selectedRepoPath, defaultWorkRepoPath, activeRepoChoice, repoScanStatus, loadRepoOptions, loadDefaultWorkRepoPath, useSelectedRepo, useDefaultRepo, repoTree, repoFileContent, repoFileDiff, repoDiff, repoStatus, repoStatusError, repoRemoteInfo, repoCommitMessage, repoRemoteUrl, ghAuthStatus, repoBranches, selectedBranch, repoCommits, prTitle, prBody, prBase, prHead, prDraft, repoTab, repoInitialized, repoHealthClass, repoHealthLabel, repoHealthText, repoHealthDot, repoHasRemote, changedFiles, isItemChanged, refreshRepo, refreshAll, loadRepoTree, selectRepoItem, loadRepoStatus, loadRepoDiff, loadRepoLog, loadRepoBranches, checkoutBranch, loadGhAuth, commitRepo, pullRepo, pushRepo, initRepo, createPr, repoActionStatus, repoActionOk, repoActionAt, repoHover, repoHoverStyle, showRepoTooltip, hideRepoTooltip, repoPanelVisible, identityPanelVisible, toggleRepoPanel, toggleIdentityPanel, showRepoPanel, hideRepoPanel, hideIdentityPanel, repoFloating, repoPanel, repoFloatState, startDragRepo, startResizeRepo, toggleRepoFloating, repoPanelEl, identityPanel, identityPanelEl, identityFloating, configOpen, configStatus, configTab, configTabs, cfgBotRepoPath, identityRepoPath, cfgDefaultWorkRepoPath, cfgDefaultRepoSearchPath, cfgKafScaleProxyUrl, cfgAuthFilterDefault, cfgWhatsAppToken, cfgWhatsAppAllowlist, cfgWhatsAppDenylist, cfgWhatsAppPending, approvePending, denyPending, clearPending, openConfig, closeConfig, saveConfig, traceOpen, tracePanelVisible, traceMeta, traceSpans, selectedSpan, traceFloating, tracePanel, tracePanelEl, openTrace, hideTracePanel, toggleTracePanel, startDragTrace, startResizeTrace, toggleTraceFloating, bothPanelsVisible, idRepoTree, idRepoFileContent, idRepoFileDiff, idRepoDiff, idRepoStatus, idRepoStatusError, idRepoRemoteInfo, idRepoCommitMessage, idRepoRemoteUrl, idGhAuthStatus, idRepoBranches, idSelectedBranch, idRepoCommits, idPrTitle, idPrBody, idPrBase, idPrHead, idPrDraft, idRepoTab, idRepoActionStatus, idRepoActionOk, idRepoActionAt, idRepoInitialized, idRepoHealthClass, idRepoHealthLabel, idRepoHealthText, idRepoHealthDot, idRepoHasRemote, idChangedFiles, isIdItemChanged, refreshIdentity, loadIdRepoTree, selectIdRepoItem, loadIdRepoStatus, loadIdRepoDiff, loadIdRepoLog, loadIdRepoBranches, checkoutIdBranch, loadIdGhAuth, commitIdRepo, pullIdRepo, pushIdRepo, initIdRepo, createIdPr, tasksPanelVisible, tasksList, selectedTask, tasksFilterStatus, tasksFilterChannel, loadTasks, toggleTasksPanel, hideTasksPanel, cfgDailyTokenLimit, cfgMaxAutoTier, traceTaskInfo, tracePolicyDecisions, traceViewMode, traceGraphSvg, groupPanelVisible, groupStatus, groupMembers, renderTraceGraph, loadGroupStatus, loadGroupMembers, toggleGroupPanel }
+                return { events, filteredEvents, selectedUser, authFilter, silentMode, toggleSilent, senders, isBot, isTechnical, getDotClass, fetchData, formatTime, getMediaUrl, isDimmed, isImage, isAudio, isDocument, docIcon, docIconClass, docExt, webUsers, selectedWebUserId, newWebUserName, linkJid, webChatMessage, webStatus, systemCopyStatus, forceSend, showTechnical, loadWebUsers, createWebUser, loadWebLink, saveWebLink, unlinkWebLink, sendWebChat, saveForceSend, copyWebChat, copyMessage, copyMessageSystem, reprocessMessage, clipboardOpen, clipboardItems, clipboardSelected, toggleClipboard, selectAllClipboard, clearClipboard, deleteSelectedClipboard, copySelectedClipboard, removeClipboardItem, workRepoPath, loadWorkRepo, saveWorkRepo, pickWorkRepo, repoOptions, selectedRepoPath, defaultWorkRepoPath, activeRepoChoice, repoScanStatus, loadRepoOptions, loadDefaultWorkRepoPath, useSelectedRepo, useDefaultRepo, repoTree, repoFileContent, repoFileDiff, repoDiff, repoStatus, repoStatusError, repoRemoteInfo, repoCommitMessage, repoRemoteUrl, ghAuthStatus, repoBranches, selectedBranch, repoCommits, prTitle, prBody, prBase, prHead, prDraft, repoTab, repoInitialized, repoHealthClass, repoHealthLabel, repoHealthText, repoHealthDot, repoHasRemote, changedFiles, isItemChanged, refreshRepo, refreshAll, loadRepoTree, selectRepoItem, loadRepoStatus, loadRepoDiff, loadRepoLog, loadRepoBranches, checkoutBranch, loadGhAuth, commitRepo, pullRepo, pushRepo, initRepo, createPr, repoActionStatus, repoActionOk, repoActionAt, repoHover, repoHoverStyle, showRepoTooltip, hideRepoTooltip, repoPanelVisible, identityPanelVisible, toggleRepoPanel, toggleIdentityPanel, showRepoPanel, hideRepoPanel, hideIdentityPanel, repoFloating, repoPanel, repoFloatState, startDragRepo, startResizeRepo, toggleRepoFloating, repoPanelEl, identityPanel, identityPanelEl, identityFloating, configOpen, configStatus, configTab, configTabs, cfgBotRepoPath, identityRepoPath, cfgDefaultWorkRepoPath, cfgDefaultRepoSearchPath, cfgKafScaleProxyUrl, cfgAuthFilterDefault, cfgWhatsAppToken, cfgWhatsAppAllowlist, cfgWhatsAppDenylist, cfgWhatsAppPending, approvePending, denyPending, clearPending, openConfig, closeConfig, saveConfig, traceOpen, tracePanelVisible, traceMeta, traceSpans, selectedSpan, traceFloating, tracePanel, tracePanelEl, openTrace, hideTracePanel, toggleTracePanel, startDragTrace, startResizeTrace, toggleTraceFloating, spanTypeColorHex, bothPanelsVisible, idRepoTree, idRepoFileContent, idRepoFileDiff, idRepoDiff, idRepoStatus, idRepoStatusError, idRepoRemoteInfo, idRepoCommitMessage, idRepoRemoteUrl, idGhAuthStatus, idRepoBranches, idSelectedBranch, idRepoCommits, idPrTitle, idPrBody, idPrBase, idPrHead, idPrDraft, idRepoTab, idRepoActionStatus, idRepoActionOk, idRepoActionAt, idRepoInitialized, idRepoHealthClass, idRepoHealthLabel, idRepoHealthText, idRepoHealthDot, idRepoHasRemote, idChangedFiles, isIdItemChanged, refreshIdentity, loadIdRepoTree, selectIdRepoItem, loadIdRepoStatus, loadIdRepoDiff, loadIdRepoLog, loadIdRepoBranches, checkoutIdBranch, loadIdGhAuth, commitIdRepo, pullIdRepo, pushIdRepo, initIdRepo, createIdPr, tasksPanelVisible, tasksList, selectedTask, tasksFilterStatus, tasksFilterChannel, loadTasks, toggleTasksPanel, hideTasksPanel, cfgDailyTokenLimit, cfgMaxAutoTier, traceTaskInfo, tracePolicyDecisions, traceViewMode, traceGraphSvg, groupPanelVisible, groupStatus, groupMembers, renderTraceGraph, loadGroupStatus, loadGroupMembers, toggleGroupPanel, switchMode, appMode }
             }
         })
         app.component('github-panel', GithubPanel)

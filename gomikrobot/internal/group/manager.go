@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +20,8 @@ type Manager struct {
 	timeline  *timeline.TimelineService
 	identity  AgentIdentity
 	topics    TopicNames
+	extTopics ExtendedTopicNames
+	topicMgr  *TopicManager
 	roster    map[string]*GroupMember
 	rosterMu  sync.RWMutex
 	active    bool
@@ -30,14 +33,18 @@ type Manager struct {
 func NewManager(cfg config.GroupConfig, timeSvc *timeline.TimelineService, identity AgentIdentity) *Manager {
 	lfs := NewLFSClient(cfg.LFSProxyURL, cfg.LFSProxyAPIKey)
 	topics := Topics(cfg.GroupName)
+	extTopics := ExtendedTopics(cfg.GroupName)
+	topicMgr := NewTopicManager(cfg.GroupName)
 
 	return &Manager{
-		cfg:      cfg,
-		lfs:      lfs,
-		timeline: timeSvc,
-		identity: identity,
-		topics:   topics,
-		roster:   make(map[string]*GroupMember),
+		cfg:       cfg,
+		lfs:       lfs,
+		timeline:  timeSvc,
+		identity:  identity,
+		topics:    topics,
+		extTopics: extTopics,
+		topicMgr:  topicMgr,
+		roster:    make(map[string]*GroupMember),
 	}
 }
 
@@ -66,6 +73,27 @@ func (m *Manager) Join(ctx context.Context) error {
 		return fmt.Errorf("join announce failed: %w", err)
 	}
 
+	// Add self to in-memory roster.
+	// First agent in the group becomes coordinator.
+	m.rosterMu.Lock()
+	role := m.identity.Role
+	if role == "" && len(m.roster) == 0 {
+		role = "coordinator"
+		m.identity.Role = role
+	}
+	m.roster[m.identity.AgentID] = &GroupMember{
+		AgentID:      m.identity.AgentID,
+		AgentName:    m.identity.AgentName,
+		SoulSummary:  m.identity.SoulSummary,
+		Capabilities: m.identity.Capabilities,
+		Channels:     m.identity.Channels,
+		Model:        m.identity.Model,
+		Role:         role,
+		Status:       "active",
+		LastSeen:     time.Now(),
+	}
+	m.rosterMu.Unlock()
+
 	// Persist self as a member
 	if m.timeline != nil {
 		caps, _ := json.Marshal(m.identity.Capabilities)
@@ -78,6 +106,20 @@ func (m *Manager) Join(ctx context.Context) error {
 			Channels:     string(chs),
 			Model:        m.identity.Model,
 			Status:       "active",
+		})
+		// Log membership history
+		_ = m.timeline.LogMembershipHistory(&timeline.GroupMembershipHistoryRecord{
+			AgentID:       m.identity.AgentID,
+			GroupName:     m.cfg.GroupName,
+			Role:          role,
+			Action:        "joined",
+			LFSProxyURL:   m.cfg.LFSProxyURL,
+			KafkaBrokers:  m.cfg.KafkaBrokers,
+			ConsumerGroup: m.cfg.ConsumerGroup,
+			AgentName:     m.identity.AgentName,
+			Capabilities:  string(caps),
+			Channels:      string(chs),
+			Model:         m.identity.Model,
 		})
 	}
 
@@ -122,9 +164,24 @@ func (m *Manager) Leave(ctx context.Context) error {
 		slog.Warn("Leave announce failed", "error", err)
 	}
 
-	// Remove self from roster db
+	// Soft-delete self from roster db and log history
 	if m.timeline != nil {
-		_ = m.timeline.RemoveGroupMember(m.identity.AgentID)
+		_ = m.timeline.SoftDeleteGroupMember(m.identity.AgentID)
+		caps, _ := json.Marshal(m.identity.Capabilities)
+		chs, _ := json.Marshal(m.identity.Channels)
+		_ = m.timeline.LogMembershipHistory(&timeline.GroupMembershipHistoryRecord{
+			AgentID:       m.identity.AgentID,
+			GroupName:     m.cfg.GroupName,
+			Role:          m.identity.Role,
+			Action:        "left",
+			LFSProxyURL:   m.cfg.LFSProxyURL,
+			KafkaBrokers:  m.cfg.KafkaBrokers,
+			ConsumerGroup: m.cfg.ConsumerGroup,
+			AgentName:     m.identity.AgentName,
+			Capabilities:  string(caps),
+			Channels:      string(chs),
+			Model:         m.identity.Model,
+		})
 	}
 
 	m.active = false
@@ -208,6 +265,7 @@ func (m *Manager) HandleAnnounce(env *GroupEnvelope) {
 			Capabilities: id.Capabilities,
 			Channels:     id.Channels,
 			Model:        id.Model,
+			Role:         id.Role,
 			Status:       id.Status,
 			LastSeen:     time.Now(),
 		}
@@ -242,7 +300,7 @@ func (m *Manager) HandleAnnounce(env *GroupEnvelope) {
 		m.rosterMu.Unlock()
 
 		if m.timeline != nil {
-			_ = m.timeline.RemoveGroupMember(id.AgentID)
+			_ = m.timeline.SoftDeleteGroupMember(id.AgentID)
 		}
 		slog.Info("Member left", "agent_id", id.AgentID)
 	}
@@ -260,7 +318,47 @@ func (m *Manager) PublishTrace(ctx context.Context, tracePayload TracePayload) e
 		Timestamp:     time.Now(),
 		Payload:       tracePayload,
 	}
-	return m.lfs.ProduceEnvelope(ctx, m.topics.Traces, env)
+	err := m.lfs.ProduceEnvelope(ctx, m.topics.Traces, env)
+	// Also log to topic_message_log so the browse view shows trace data
+	if m.timeline != nil {
+		_ = m.timeline.LogTopicMessage(&timeline.TopicMessageLogRecord{
+			TopicName:     m.extTopics.ObserveTraces,
+			SenderID:      m.identity.AgentID,
+			EnvelopeType:  EnvelopeTrace,
+			CorrelationID: tracePayload.TraceID,
+			PayloadSize:   len(tracePayload.Content),
+		})
+	}
+	return err
+}
+
+// PublishAudit publishes an audit event to the group audit topic.
+func (m *Manager) PublishAudit(ctx context.Context, eventType, traceID, detail string) error {
+	if !m.Active() {
+		return nil
+	}
+	env := &GroupEnvelope{
+		Type:          EnvelopeAudit,
+		CorrelationID: traceID,
+		SenderID:      m.identity.AgentID,
+		Timestamp:     time.Now(),
+		Payload: map[string]string{
+			"event_type": eventType,
+			"detail":     detail,
+		},
+	}
+	err := m.lfs.ProduceEnvelope(ctx, m.extTopics.ObserveAudit, env)
+	// Also log to topic_message_log so the browse view shows audit data
+	if m.timeline != nil {
+		_ = m.timeline.LogTopicMessage(&timeline.TopicMessageLogRecord{
+			TopicName:     m.extTopics.ObserveAudit,
+			SenderID:      m.identity.AgentID,
+			EnvelopeType:  EnvelopeAudit,
+			CorrelationID: traceID,
+			PayloadSize:   len(detail),
+		})
+	}
+	return err
 }
 
 // SubmitTask sends a task request to the group.
@@ -300,7 +398,131 @@ func (m *Manager) RespondTask(ctx context.Context, taskID, content, status strin
 			Status:      status,
 		},
 	}
-	return m.lfs.ProduceEnvelope(ctx, m.topics.Responses, env)
+	if err := m.lfs.ProduceEnvelope(ctx, m.topics.Responses, env); err != nil {
+		return err
+	}
+
+	// Log delegation events for completed/failed responses.
+	if m.timeline != nil && (status == "completed" || status == "failed") {
+		_ = m.timeline.LogDelegationEvent(
+			taskID, status,
+			m.identity.AgentID, "",
+			content, 0,
+		)
+	}
+	return nil
+}
+
+// SubmitDelegatedTask sends a delegated task request, enforcing MaxDelegationDepth.
+func (m *Manager) SubmitDelegatedTask(ctx context.Context, req DelegatedTaskRequest) error {
+	if !m.Active() {
+		return fmt.Errorf("not in a group")
+	}
+
+	maxDepth := m.cfg.MaxDelegationDepth
+	if maxDepth <= 0 {
+		maxDepth = 3
+	}
+	if req.DelegationDepth >= maxDepth {
+		return fmt.Errorf("delegation depth %d exceeds max %d", req.DelegationDepth, maxDepth)
+	}
+
+	originalRequester := req.OriginalRequesterID
+	if originalRequester == "" {
+		originalRequester = m.identity.AgentID
+	}
+
+	var deadlineStr string
+	if req.DeadlineAt != nil {
+		deadlineStr = req.DeadlineAt.Format("2006-01-02T15:04:05Z07:00")
+	}
+
+	env := &GroupEnvelope{
+		Type:          EnvelopeRequest,
+		CorrelationID: req.TaskID,
+		SenderID:      m.identity.AgentID,
+		Timestamp:     time.Now(),
+		Payload: TaskRequestPayload{
+			TaskID:              req.TaskID,
+			Description:         req.Description,
+			Content:             req.Content,
+			RequesterID:         m.identity.AgentID,
+			ParentTaskID:        req.ParentTaskID,
+			DelegationDepth:     req.DelegationDepth + 1,
+			OriginalRequesterID: originalRequester,
+			DeadlineAt:          deadlineStr,
+		},
+	}
+
+	if err := m.lfs.ProduceEnvelope(ctx, m.topics.Requests, env); err != nil {
+		return fmt.Errorf("submit delegated task: %w", err)
+	}
+
+	// Persist to DB with delegation info.
+	if m.timeline != nil {
+		_ = m.timeline.InsertDelegatedGroupTask(&timeline.GroupTaskRecord{
+			TaskID:              req.TaskID,
+			Description:         req.Description,
+			Content:             req.Content,
+			Direction:           "outgoing",
+			RequesterID:         m.identity.AgentID,
+			Status:              "pending",
+			ParentTaskID:        req.ParentTaskID,
+			DelegationDepth:     req.DelegationDepth + 1,
+			OriginalRequesterID: originalRequester,
+			DeadlineAt:          req.DeadlineAt,
+		})
+
+		// Log delegation event.
+		_ = m.timeline.LogDelegationEvent(
+			req.TaskID, "submitted",
+			m.identity.AgentID, "", // receiver unknown yet
+			req.Description, req.DelegationDepth+1,
+		)
+	}
+
+	slog.Info("Delegated task submitted",
+		"task_id", req.TaskID,
+		"parent", req.ParentTaskID,
+		"depth", req.DelegationDepth+1)
+	return nil
+}
+
+// ReportTaskStatus publishes an EnvelopeTaskStatus message and logs delegation events.
+func (m *Manager) ReportTaskStatus(ctx context.Context, taskID, status, summary string) error {
+	if !m.Active() {
+		return fmt.Errorf("not in a group")
+	}
+
+	env := &GroupEnvelope{
+		Type:          EnvelopeTaskStatus,
+		CorrelationID: taskID,
+		SenderID:      m.identity.AgentID,
+		Timestamp:     time.Now(),
+		Payload: TaskStatusPayload{
+			TaskID:      taskID,
+			ResponderID: m.identity.AgentID,
+			Status:      status,
+			Summary:     summary,
+		},
+	}
+
+	if err := m.lfs.ProduceEnvelope(ctx, m.topics.Responses, env); err != nil {
+		return fmt.Errorf("report task status: %w", err)
+	}
+
+	// Log delegation event for accepted status.
+	if m.timeline != nil && status == "accepted" {
+		_ = m.timeline.AcceptGroupTask(taskID, m.identity.AgentID)
+		_ = m.timeline.LogDelegationEvent(
+			taskID, "accepted",
+			m.identity.AgentID, "",
+			summary, 0,
+		)
+	}
+
+	slog.Info("Task status reported", "task_id", taskID, "status", status)
+	return nil
 }
 
 // Config returns the current group configuration.
@@ -321,6 +543,40 @@ func (m *Manager) LFSHealthy() bool {
 // Topics returns the topic names for the current group.
 func (m *Manager) Topics() TopicNames {
 	return m.topics
+}
+
+// PublishEnvelope publishes a pre-built envelope to a specific Kafka topic.
+func (m *Manager) PublishEnvelope(ctx context.Context, topic string, env *GroupEnvelope) error {
+	return m.lfs.ProduceEnvelope(ctx, topic, env)
+}
+
+// EnsureTopic sends a lightweight heartbeat to a topic to auto-create it in Kafka.
+func (m *Manager) EnsureTopic(ctx context.Context, topicName string) error {
+	if !m.Active() {
+		return fmt.Errorf("not in a group")
+	}
+	// Validate topic belongs to this group (prefix check)
+	prefix := fmt.Sprintf("group.%s.", m.cfg.GroupName)
+	if !strings.HasPrefix(topicName, prefix) {
+		return fmt.Errorf("topic %q does not belong to group %s", topicName, m.cfg.GroupName)
+	}
+
+	env := &GroupEnvelope{
+		Type:          EnvelopeHeartbeat,
+		CorrelationID: fmt.Sprintf("ensure-%d", time.Now().UnixNano()),
+		SenderID:      m.identity.AgentID,
+		Timestamp:     time.Now(),
+		Payload: map[string]string{
+			"action": "ensure_topic",
+			"topic":  topicName,
+		},
+	}
+	if err := m.lfs.ProduceEnvelope(ctx, topicName, env); err != nil {
+		return fmt.Errorf("ensure topic %s: %w", topicName, err)
+	}
+
+	slog.Info("Topic ensured", "topic", topicName)
+	return nil
 }
 
 func (m *Manager) startHeartbeat(ctx context.Context) {

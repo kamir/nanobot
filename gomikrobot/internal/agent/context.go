@@ -280,6 +280,10 @@ func (b *ContextBuilder) BuildIdentityEnvelope(agentID, agentName, model string)
 	for _, tool := range b.registry.List() {
 		capabilities = append(capabilities, tool.Name())
 	}
+	// Fallback: if registry is empty (e.g. group manager context), use default names.
+	if len(capabilities) == 0 {
+		capabilities = tools.DefaultToolNames()
+	}
 
 	// Determine active channels
 	channels := []string{"cli"} // CLI is always available

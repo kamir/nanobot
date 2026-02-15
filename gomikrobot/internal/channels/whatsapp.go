@@ -210,6 +210,11 @@ func (c *WhatsAppChannel) logOutbound(status string, msg *bus.OutboundMessage) {
 	if c.timeline == nil {
 		return
 	}
+	outMeta, _ := json.Marshal(map[string]any{
+		"response_text":   msg.Content,
+		"delivery_status": status,
+		"recipient":       msg.ChatID,
+	})
 	err := c.timeline.AddEvent(&timeline.TimelineEvent{
 		EventID:        fmt.Sprintf("WA_OUT_%d", time.Now().UnixNano()),
 		TraceID:        msg.TraceID,
@@ -220,6 +225,7 @@ func (c *WhatsAppChannel) logOutbound(status string, msg *bus.OutboundMessage) {
 		ContentText:    msg.Content,
 		Classification: fmt.Sprintf("WHATSAPP_OUTBOUND status=%s to=%s", status, msg.ChatID),
 		Authorized:     true,
+		Metadata:       string(outMeta),
 	})
 	if err != nil {
 		fmt.Printf("⚠️ Failed to log outbound timeline event: %v\n", err)
@@ -442,6 +448,12 @@ func (c *WhatsAppChannel) logEvent(evtID, traceID, sender, evtType, content, med
 	if c.timeline == nil {
 		return
 	}
+	inMeta, _ := json.Marshal(map[string]any{
+		"channel":      "whatsapp",
+		"sender":       sender,
+		"message_type": evtType,
+		"content":      content,
+	})
 	err := c.timeline.AddEvent(&timeline.TimelineEvent{
 		EventID:        evtID,
 		TraceID:        traceID,
@@ -453,6 +465,7 @@ func (c *WhatsAppChannel) logEvent(evtID, traceID, sender, evtType, content, med
 		MediaPath:      media,
 		Classification: classification,
 		Authorized:     authorized,
+		Metadata:       string(inMeta),
 	})
 	if err != nil {
 		fmt.Printf("⚠️ Failed to log timeline event: %v\n", err)

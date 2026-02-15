@@ -45,6 +45,16 @@ func ToolTier(t Tool) int {
 	return TierReadOnly
 }
 
+// DefaultToolNames returns the names of tools that are registered by default
+// in the agent loop. Used for identity announcements when a full registry is
+// not available (e.g. group manager startup).
+func DefaultToolNames() []string {
+	return []string{
+		"read_file", "write_file", "edit_file",
+		"list_dir", "resolve_path", "exec",
+	}
+}
+
 // Registry manages tool registration and execution.
 type Registry struct {
 	tools map[string]Tool

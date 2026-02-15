@@ -38,6 +38,15 @@ const (
 	EnvelopeResponse  = "response"
 	EnvelopeTrace     = "trace"
 	EnvelopeHeartbeat = "heartbeat"
+
+	// Extended envelope types
+	EnvelopeOnboard       = "onboard"
+	EnvelopeMemory        = "memory"
+	EnvelopeSkillRequest  = "skill_request"
+	EnvelopeSkillResponse = "skill_response"
+	EnvelopeAudit         = "audit"
+	EnvelopeTaskStatus    = "task_status"
+	EnvelopeRoster        = "roster"
 )
 
 // AnnouncePayload is sent on join/leave/heartbeat.
@@ -48,10 +57,14 @@ type AnnouncePayload struct {
 
 // TaskRequestPayload is a task request from one agent to the group.
 type TaskRequestPayload struct {
-	TaskID      string `json:"task_id"`
-	Description string `json:"description"`
-	Content     string `json:"content"`
-	RequesterID string `json:"requester_id"`
+	TaskID              string `json:"task_id"`
+	Description         string `json:"description"`
+	Content             string `json:"content"`
+	RequesterID         string `json:"requester_id"`
+	ParentTaskID        string `json:"parent_task_id,omitempty"`
+	DelegationDepth     int    `json:"delegation_depth,omitempty"`
+	OriginalRequesterID string `json:"original_requester_id,omitempty"`
+	DeadlineAt          string `json:"deadline_at,omitempty"` // RFC3339
 }
 
 // TaskResponsePayload is a task response from an agent.
@@ -60,6 +73,26 @@ type TaskResponsePayload struct {
 	ResponderID string `json:"responder_id"`
 	Content     string `json:"content"`
 	Status      string `json:"status"` // "completed", "failed", "rejected"
+}
+
+// TaskStatusPayload reports task status changes (accepted, progress, etc.).
+type TaskStatusPayload struct {
+	TaskID      string `json:"task_id"`
+	ResponderID string `json:"responder_id"`
+	Status      string `json:"status"` // "accepted", "in_progress", "completed", "failed"
+	Summary     string `json:"summary,omitempty"`
+}
+
+// DelegatedTaskRequest is the full delegation request including depth/parent info.
+type DelegatedTaskRequest struct {
+	TaskID              string     `json:"task_id"`
+	Description         string     `json:"description"`
+	Content             string     `json:"content"`
+	RequesterID         string     `json:"requester_id"`
+	ParentTaskID        string     `json:"parent_task_id"`
+	DelegationDepth     int        `json:"delegation_depth"`
+	OriginalRequesterID string     `json:"original_requester_id"`
+	DeadlineAt          *time.Time `json:"deadline_at,omitempty"`
 }
 
 // TracePayload carries shared trace data between agents.
@@ -83,6 +116,7 @@ type GroupMember struct {
 	Capabilities []string  `json:"capabilities"`
 	Channels     []string  `json:"channels"`
 	Model        string    `json:"model"`
+	Role         string    `json:"role"`
 	Status       string    `json:"status"`
 	LastSeen     time.Time `json:"last_seen"`
 }

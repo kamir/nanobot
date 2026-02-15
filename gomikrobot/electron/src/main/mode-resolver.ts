@@ -48,6 +48,14 @@ export function saveElectronConfig(cfg: ElectronConfig): void {
  * Resolve the app mode from CLI args, config file, or return '' to show picker.
  */
 export function resolveMode(argv: string[]): AppMode | '' {
+  // Check for --reset-mode: clear persisted mode and show picker
+  if (argv.includes('--reset-mode')) {
+    const cfg = loadElectronConfig();
+    cfg.mode = '';
+    saveElectronConfig(cfg);
+    return '';
+  }
+
   // Check CLI args: --mode=full|standalone|remote
   for (const arg of argv) {
     const match = arg.match(/^--mode=(full|standalone|remote)$/);

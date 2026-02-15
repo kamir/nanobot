@@ -16,6 +16,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   mode: {
     get: () => ipcRenderer.invoke('mode:get'),
     set: (mode: string) => ipcRenderer.invoke('mode:set', mode),
+    /**
+     * activate — for local modes: saves mode, starts sidecar, waits for health,
+     * then navigates the window to the Go-served timeline page.
+     * For remote mode: saves mode, renderer handles the rest.
+     */
+    activate: (mode: string) => ipcRenderer.invoke('mode:activate', mode),
+    /** reset — clear mode, stop sidecar, go back to mode picker. */
+    reset: () => ipcRenderer.invoke('mode:reset'),
   },
 
   // Config
@@ -32,5 +40,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     verify: (conn: any) => ipcRenderer.invoke('remote:verify', conn),
     setActive: (id: string) => ipcRenderer.invoke('remote:setActive', id),
     getActive: () => ipcRenderer.invoke('remote:getActive'),
+    /** connect — verify remote, then navigate window to remote /timeline. */
+    connect: (connId: string) => ipcRenderer.invoke('remote:connect', connId),
   },
 });

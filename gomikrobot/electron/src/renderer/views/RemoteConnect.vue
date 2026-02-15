@@ -33,20 +33,31 @@ async function addAndVerify() {
 
   if (result.ok) {
     await remoteStore.addConnection(conn)
-    await remoteStore.setActive(conn.id)
-    verifyStatus.value = 'Connected!'
+    verifyStatus.value = 'Connected! Navigating...'
     newName.value = ''
     newUrl.value = ''
     newToken.value = ''
-    setTimeout(() => router.push('/dashboard'), 500)
+    // Navigate the window to the remote Go-served timeline
+    if (window.electronAPI) {
+      const connectResult = await window.electronAPI.remote.connect(conn.id)
+      if (!connectResult.ok) {
+        verifyStatus.value = `Failed: ${connectResult.error}`
+      }
+      // On success the window navigates away — no further code runs here.
+    }
   } else {
     verifyStatus.value = `Failed: ${result.error}`
   }
 }
 
 async function connectTo(id: string) {
-  await remoteStore.setActive(id)
-  router.push('/dashboard')
+  if (window.electronAPI) {
+    const result = await window.electronAPI.remote.connect(id)
+    if (!result.ok) {
+      verifyStatus.value = `Failed: ${result.error}`
+    }
+    // On success the window navigates away.
+  }
 }
 
 async function remove(id: string) {

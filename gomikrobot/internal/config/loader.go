@@ -123,6 +123,7 @@ func Load() (*Config, error) {
 	envconfig.Process("MIKROBOT_TOOLS_WEB_SEARCH", &cfg.Tools.Web.Search)
 	envconfig.Process("MIKROBOT_GROUP", &cfg.Group)
 	envconfig.Process("MIKROBOT_ORCHESTRATOR", &cfg.Orchestrator)
+	envconfig.Process("MIKROBOT_SCHEDULER", &cfg.Scheduler)
 
 	// Legacy env var compatibility
 	envconfig.Process("MIKROBOT_AGENTS", &cfg.Paths)

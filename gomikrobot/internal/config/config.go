@@ -14,6 +14,7 @@ type Config struct {
 	Tools        ToolsConfig        `json:"tools"`
 	Group        GroupConfig        `json:"group"`
 	Orchestrator OrchestratorConfig `json:"orchestrator"`
+	Scheduler    SchedulerConfig    `json:"scheduler"`
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +166,21 @@ type GroupConfig struct {
 	ConsumerGroup  string `json:"consumerGroup" envconfig:"KAFKA_CONSUMER_GROUP"`
 	AgentID        string `json:"agentId" envconfig:"AGENT_ID"`
 	PollIntervalMs int    `json:"pollIntervalMs" envconfig:"POLL_INTERVAL_MS"`
+	OnboardMode       string `json:"onboardMode" envconfig:"ONBOARD_MODE"` // "open" (default) or "gated"
+	MaxDelegationDepth int   `json:"maxDelegationDepth" envconfig:"MAX_DELEGATION_DEPTH"`
+}
+
+// ---------------------------------------------------------------------------
+// Scheduler – cron-based job scheduling
+// ---------------------------------------------------------------------------
+
+// SchedulerConfig contains settings for the cron scheduler.
+type SchedulerConfig struct {
+	Enabled        bool          `json:"enabled" envconfig:"ENABLED"`
+	TickInterval   time.Duration `json:"tickInterval" envconfig:"TICK_INTERVAL"`
+	MaxConcLLM     int           `json:"maxConcLLM" envconfig:"MAX_CONC_LLM"`
+	MaxConcShell   int           `json:"maxConcShell" envconfig:"MAX_CONC_SHELL"`
+	MaxConcDefault int           `json:"maxConcDefault" envconfig:"MAX_CONC_DEFAULT"`
 }
 
 // ExecToolConfig contains shell execution tool settings.
@@ -222,13 +238,21 @@ func DefaultConfig() *Config {
 			},
 		},
 		Group: GroupConfig{
-			Enabled:        false,
-			LFSProxyURL:    "http://localhost:8080",
-			PollIntervalMs: 2000,
+			Enabled:            false,
+			LFSProxyURL:        "http://localhost:8080",
+			PollIntervalMs:     2000,
+			MaxDelegationDepth: 3,
 		},
 		Orchestrator: OrchestratorConfig{
 			Enabled: false,
 			Role:    "worker",
+		},
+		Scheduler: SchedulerConfig{
+			Enabled:        false,
+			TickInterval:   60 * time.Second,
+			MaxConcLLM:     3,
+			MaxConcShell:   1,
+			MaxConcDefault: 5,
 		},
 	}
 }

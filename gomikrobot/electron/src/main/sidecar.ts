@@ -42,6 +42,13 @@ export class SidecarManager {
       return configuredPath;
     }
 
+    // Dev mode: look for binary built by `make build` in project root
+    // __dirname is electron/dist/main/, project root is electron/../
+    const devPath = path.join(__dirname, '..', '..', '..', 'gomikrobot');
+    if (fs.existsSync(devPath)) {
+      return devPath;
+    }
+
     // Packaged: look in resources directory
     const resourcesPath = path.join(process.resourcesPath || '', 'gomikrobot');
     if (fs.existsSync(resourcesPath)) {
@@ -76,8 +83,12 @@ export class SidecarManager {
       env['MIKROBOT_GROUP_ENABLED'] = 'false';
     }
 
+    // Set cwd to the binary's directory so relative paths (web/timeline.html) resolve correctly
+    const binaryDir = path.dirname(path.resolve(binary));
+
     this.proc = spawn(binary, ['gateway'], {
       env,
+      cwd: binaryDir,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 

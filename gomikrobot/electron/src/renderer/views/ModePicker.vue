@@ -1,9 +1,12 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useModeStore } from '../stores/mode'
 
 const router = useRouter()
 const modeStore = useModeStore()
+const activating = ref(false)
+const error = ref('')
 
 const modes = [
   {
@@ -15,7 +18,7 @@ const modes = [
   },
   {
     id: 'full' as const,
-    title: 'Full Desktop',
+    title: 'Group Master Desktop',
     description: 'Full local gateway with group collaboration and multi-agent orchestration via Kafka.',
     icon: '&#x1f310;',
     features: ['All channels active', 'Kafka group link', 'Agent orchestrator', 'Zone management'],
@@ -30,11 +33,27 @@ const modes = [
 ]
 
 async function selectMode(mode: 'full' | 'standalone' | 'remote') {
-  await modeStore.setMode(mode)
+  if (activating.value) return
+  activating.value = true
+  error.value = ''
+
   if (mode === 'remote') {
+    // Remote: save mode, stay in Vue renderer for connection setup
+    await modeStore.setMode(mode)
+    activating.value = false
     router.push('/remote')
-  } else {
-    router.push('/dashboard')
+    return
+  }
+
+  // Local modes: call activate which starts sidecar + navigates to Go timeline.
+  // The main process takes over the window — this Vue app will be unloaded.
+  if (window.electronAPI) {
+    const result = await window.electronAPI.mode.activate(mode)
+    if (!result.ok) {
+      error.value = result.error || 'Failed to start gateway'
+      activating.value = false
+    }
+    // On success the window navigates away — no further code runs here.
   }
 }
 </script>
@@ -50,6 +69,7 @@ async function selectMode(mode: 'full' | 'standalone' | 'remote') {
         v-for="mode in modes"
         :key="mode.id"
         class="mode-card"
+        :class="{ disabled: activating }"
         @click="selectMode(mode.id)"
       >
         <div class="card-icon" v-html="mode.icon"></div>
@@ -60,6 +80,7 @@ async function selectMode(mode: 'full' | 'standalone' | 'remote') {
         </ul>
       </div>
     </div>
+    <p v-if="error" class="error">{{ error }}</p>
   </div>
 </template>
 
@@ -105,10 +126,15 @@ async function selectMode(mode: 'full' | 'standalone' | 'remote') {
   transition: all 0.2s;
 }
 
-.mode-card:hover {
+.mode-card:hover:not(.disabled) {
   border-color: #58a6ff;
   transform: translateY(-4px);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.mode-card.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .card-icon {
@@ -143,5 +169,11 @@ async function selectMode(mode: 'full' | 'standalone' | 'remote') {
 .card-features li::before {
   content: '+ ';
   color: #3fb950;
+}
+
+.error {
+  margin-top: 24px;
+  color: #f85149;
+  font-size: 13px;
 }
 </style>

@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -24,8 +25,10 @@ import (
 	"github.com/kamir/gomikrobot/internal/config"
 	"github.com/kamir/gomikrobot/internal/group"
 	"github.com/kamir/gomikrobot/internal/memory"
+	"github.com/kamir/gomikrobot/internal/orchestrator"
 	"github.com/kamir/gomikrobot/internal/policy"
 	"github.com/kamir/gomikrobot/internal/provider"
+	"github.com/kamir/gomikrobot/internal/scheduler"
 	"github.com/kamir/gomikrobot/internal/timeline"
 	"github.com/kamir/gomikrobot/internal/tools"
 	"github.com/spf13/cobra"
@@ -156,16 +159,26 @@ func runGateway(cmd *cobra.Command, args []string) {
 			agentID = fmt.Sprintf("gomikrobot-%s", hostname)
 		}
 		identity := ctxBuilder.BuildIdentityEnvelope(agentID, "GoMikroBot", cfg.Model.Name)
+		// Enrich channels based on actual config.
+		if cfg.Channels.WhatsApp.Enabled {
+			identity.Channels = append(identity.Channels, "whatsapp")
+		}
+		if cfg.Channels.Telegram.Enabled {
+			identity.Channels = append(identity.Channels, "telegram")
+		}
+		if cfg.Channels.Discord.Enabled {
+			identity.Channels = append(identity.Channels, "discord")
+		}
 		return group.NewManager(grpCfg, timeSvc, identity)
 	}
 
 	// Helper: start Kafka consumer + router, returns cancel func
-	startGrpKafka := func(grpCfg config.GroupConfig, mgr *group.Manager, parentCtx context.Context) context.CancelFunc {
+	startGrpKafka := func(grpCfg config.GroupConfig, mgr *group.Manager, parentCtx context.Context, orchHandler group.OrchestratorHandler) context.CancelFunc {
 		if grpCfg.KafkaBrokers == "" {
 			return func() {}
 		}
 		kafkaCtx, kafkaCancel := context.WithCancel(parentCtx)
-		topics := mgr.Topics()
+		extTopics := group.ExtendedTopics(grpCfg.GroupName)
 		consumerGroup := grpCfg.ConsumerGroup
 		if consumerGroup == "" {
 			consumerGroup = grpCfg.AgentID
@@ -177,9 +190,13 @@ func runGateway(cmd *cobra.Command, args []string) {
 		kafkaConsumer := group.NewKafkaConsumer(
 			grpCfg.KafkaBrokers,
 			consumerGroup,
-			[]string{topics.Announce, topics.Requests, topics.Responses, topics.Traces},
+			extTopics.AllTopics(),
 		)
+		grpState.SetConsumer(kafkaConsumer)
 		router := group.NewGroupRouter(mgr, msgBus, kafkaConsumer)
+		if orchHandler != nil {
+			router.SetOrchestratorHandler(orchHandler)
+		}
 		go func() {
 			if err := router.Run(kafkaCtx); err != nil {
 				fmt.Printf("⚠️ Group router stopped: %v\n", err)
@@ -211,6 +228,15 @@ func runGateway(cmd *cobra.Command, args []string) {
 	if grpState.Manager() != nil {
 		groupPublisher = &groupTraceAdapter{mgr: grpState.Manager()}
 	}
+
+	// 4e. Setup Orchestrator (conditional)
+	var orch *orchestrator.Orchestrator
+	if cfg.Orchestrator.Enabled && grpState.Manager() != nil {
+		orch = orchestrator.New(cfg.Orchestrator, grpState.Manager(), timeSvc)
+		fmt.Println("🎯 Orchestrator enabled:", cfg.Orchestrator.Role)
+	}
+
+	gatewayStartTime := time.Now()
 
 	// 5. Setup Loop
 	loop := agent.NewLoop(agent.LoopOptions{
@@ -328,6 +354,20 @@ func runGateway(cmd *cobra.Command, args []string) {
 	deliveryWorker := agent.NewDeliveryWorker(timeSvc, msgBus)
 	go deliveryWorker.Run(ctx)
 
+	// Start Scheduler (conditional)
+	if cfg.Scheduler.Enabled {
+		schedCfg := scheduler.Config{
+			Enabled:        true,
+			TickInterval:   cfg.Scheduler.TickInterval,
+			MaxConcLLM:     cfg.Scheduler.MaxConcLLM,
+			MaxConcShell:   cfg.Scheduler.MaxConcShell,
+			MaxConcDefault: cfg.Scheduler.MaxConcDefault,
+		}
+		sched := scheduler.New(schedCfg, msgBus, timeSvc)
+		go sched.Run(ctx)
+		fmt.Println("Scheduler started")
+	}
+
 	// Start Bus Dispatcher
 	go msgBus.DispatchOutbound(ctx)
 
@@ -353,6 +393,12 @@ func runGateway(cmd *cobra.Command, args []string) {
 
 			fmt.Printf("🌐 Local Network Request: %s\n", msg)
 			traceID := newTraceID()
+			inMeta, _ := json.Marshal(map[string]any{
+				"channel":      "local",
+				"sender":       session,
+				"message_type": "TEXT",
+				"content":      msg,
+			})
 			_ = timeSvc.AddEvent(&timeline.TimelineEvent{
 				EventID:        fmt.Sprintf("LOCAL_IN_%d", time.Now().UnixNano()),
 				TraceID:        traceID,
@@ -363,9 +409,14 @@ func runGateway(cmd *cobra.Command, args []string) {
 				ContentText:    msg,
 				Classification: "LOCAL_INBOUND",
 				Authorized:     true,
+				Metadata:       string(inMeta),
 			})
 			resp, err := loop.ProcessDirectWithTrace(ctx, msg, session, traceID)
 			if err != nil {
+				outErrMeta, _ := json.Marshal(map[string]any{
+					"response_text":   err.Error(),
+					"delivery_status": "error",
+				})
 				_ = timeSvc.AddEvent(&timeline.TimelineEvent{
 					EventID:        fmt.Sprintf("LOCAL_OUT_%d", time.Now().UnixNano()),
 					TraceID:        traceID,
@@ -376,11 +427,16 @@ func runGateway(cmd *cobra.Command, args []string) {
 					ContentText:    err.Error(),
 					Classification: "LOCAL_OUTBOUND status=error",
 					Authorized:     true,
+					Metadata:       string(outErrMeta),
 				})
 				fmt.Printf("📤 Local outbound status=error session=%s\n", session)
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
+			outMeta, _ := json.Marshal(map[string]any{
+				"response_text":   resp,
+				"delivery_status": "sent",
+			})
 			_ = timeSvc.AddEvent(&timeline.TimelineEvent{
 				EventID:        fmt.Sprintf("LOCAL_OUT_%d", time.Now().UnixNano()),
 				TraceID:        traceID,
@@ -391,6 +447,7 @@ func runGateway(cmd *cobra.Command, args []string) {
 				ContentText:    resp,
 				Classification: "LOCAL_OUTBOUND status=sent",
 				Authorized:     true,
+				Metadata:       string(outMeta),
 			})
 			fmt.Printf("📤 Local outbound status=sent session=%s\n", session)
 			fmt.Fprint(w, resp)
@@ -406,6 +463,128 @@ func runGateway(cmd *cobra.Command, args []string) {
 	// Start Dashboard Server
 	go func() {
 		mux := http.NewServeMux()
+
+		// API: Status (unauthenticated health check)
+		mux.HandleFunc("/api/v1/status", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Content-Type", "application/json")
+
+			agentID := cfg.Group.AgentID
+			if agentID == "" {
+				hostname, _ := os.Hostname()
+				agentID = fmt.Sprintf("gomikrobot-%s", hostname)
+			}
+
+			mode := "standalone"
+			if cfg.Group.Enabled && cfg.Orchestrator.Enabled {
+				mode = "full"
+			} else if cfg.Group.Enabled {
+				mode = "group"
+			}
+			if cfg.Gateway.Host == "0.0.0.0" {
+				mode = "headless"
+			}
+
+			orchEnabled := false
+			if orch != nil {
+				orchEnabled = true
+			}
+
+			json.NewEncoder(w).Encode(map[string]any{
+				"version":              version,
+				"mode":                 mode,
+				"agent_id":             agentID,
+				"uptime_seconds":       int(time.Since(gatewayStartTime).Seconds()),
+				"group_enabled":        cfg.Group.Enabled,
+				"orchestrator_enabled": orchEnabled,
+			})
+		})
+
+		// API: Auth Verify (POST)
+		mux.HandleFunc("/api/v1/auth/verify", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Content-Type", "application/json")
+			if cfg.Gateway.AuthToken == "" {
+				json.NewEncoder(w).Encode(map[string]any{"valid": true, "auth_required": false})
+				return
+			}
+			token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+			valid := token == cfg.Gateway.AuthToken
+			json.NewEncoder(w).Encode(map[string]any{"valid": valid, "auth_required": true})
+		})
+
+		// Orchestrator API endpoints
+		mux.HandleFunc("/api/v1/orchestrator/status", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Content-Type", "application/json")
+			if orch == nil {
+				json.NewEncoder(w).Encode(map[string]any{"enabled": false})
+				return
+			}
+			json.NewEncoder(w).Encode(orch.Status())
+		})
+
+		mux.HandleFunc("/api/v1/orchestrator/hierarchy", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Content-Type", "application/json")
+			if orch == nil {
+				json.NewEncoder(w).Encode([]any{})
+				return
+			}
+			json.NewEncoder(w).Encode(orch.GetHierarchy())
+		})
+
+		mux.HandleFunc("/api/v1/orchestrator/zones", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Content-Type", "application/json")
+			if orch == nil {
+				json.NewEncoder(w).Encode([]any{})
+				return
+			}
+			json.NewEncoder(w).Encode(orch.GetZones())
+		})
+
+		mux.HandleFunc("/api/v1/orchestrator/agents", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Content-Type", "application/json")
+			if orch == nil {
+				json.NewEncoder(w).Encode([]any{})
+				return
+			}
+			json.NewEncoder(w).Encode(orch.GetAgents())
+		})
+
+		mux.HandleFunc("/api/v1/orchestrator/dispatch", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			if r.Method == "OPTIONS" {
+				return
+			}
+			if r.Method != "POST" {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			if orch == nil {
+				http.Error(w, "orchestrator not enabled", http.StatusBadRequest)
+				return
+			}
+			var body struct {
+				Description string `json:"description"`
+				TargetZone  string `json:"target_zone"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, "invalid body", http.StatusBadRequest)
+				return
+			}
+			taskID := newTraceID()
+			if err := orch.DispatchTask(ctx, taskID, body.Description, body.TargetZone); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]string{"status": "dispatched", "task_id": taskID})
+		})
 
 		// API: Timeline
 		mux.HandleFunc("/api/v1/timeline", func(w http.ResponseWriter, r *http.Request) {
@@ -456,12 +635,13 @@ func runGateway(cmd *cobra.Command, args []string) {
 			}
 
 			type span struct {
-				ID       string `json:"id"`
-				Type     string `json:"type"`
-				Title    string `json:"title"`
-				Time     string `json:"time"`
-				Duration string `json:"duration"`
-				Output   string `json:"output"`
+				ID       string         `json:"id"`
+				Type     string         `json:"type"`
+				Title    string         `json:"title"`
+				Time     string         `json:"time"`
+				Duration string         `json:"duration"`
+				Output   string         `json:"output"`
+				Metadata map[string]any `json:"metadata,omitempty"`
 			}
 
 			spans := make([]span, 0, len(events))
@@ -477,13 +657,67 @@ func runGateway(cmd *cobra.Command, args []string) {
 				case strings.Contains(e.Classification, "TOOL"):
 					spanType = "TOOL"
 				}
+
+				// Parse metadata JSON if present
+				var meta map[string]any
+				if e.Metadata != "" {
+					_ = json.Unmarshal([]byte(e.Metadata), &meta)
+				}
+
+				// Extract duration from metadata
+				dur := ""
+				if meta != nil {
+					if ms, ok := meta["duration_ms"]; ok {
+						switch v := ms.(type) {
+						case float64:
+							dur = fmt.Sprintf("%dms", int64(v))
+						}
+					}
+				}
+
+				// Build output preview
+				output := ""
+				switch spanType {
+				case "INBOUND", "OUTBOUND":
+					output = e.ContentText
+					// Add basic metadata for INBOUND/OUTBOUND if not already present
+					if meta == nil {
+						meta = map[string]any{}
+					}
+					if spanType == "INBOUND" {
+						meta["channel"] = e.SenderID
+						meta["sender"] = e.SenderName
+						meta["message_type"] = e.EventType
+						meta["content"] = e.ContentText
+					} else {
+						meta["response_text"] = e.ContentText
+					}
+				case "LLM":
+					if meta != nil {
+						if rt, ok := meta["response_text"].(string); ok && rt != "" {
+							if len(rt) > 200 {
+								output = rt[:200] + "..."
+							} else {
+								output = rt
+							}
+						}
+					}
+				case "TOOL":
+					if meta != nil {
+						if tn, ok := meta["tool_name"].(string); ok {
+							output = tn
+						}
+					}
+				}
+
 				spans = append(spans, span{
 					ID:       e.EventID,
 					Type:     spanType,
 					Title:    e.Classification,
 					Time:     e.Timestamp.Format("15:04:05"),
-					Duration: "",
-					Output:   "",
+					Duration: dur,
+					Output:   output,
+					Metadata: meta,
 				})
 			}
 
@@ -581,10 +815,37 @@ func runGateway(cmd *cobra.Command, args []string) {
 		})
 
 		// API: Group Members (GET)
+		// Primary source: in-memory roster (always current).
+		// Fallback: DB roster (covers members persisted across restarts).
 		mux.HandleFunc("/api/v1/group/members", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Content-Type", "application/json")
 
+			mgr := grpState.Manager()
+			if mgr != nil && mgr.Active() {
+				liveMembers := mgr.Members()
+				// Convert to the same shape the frontend expects.
+				out := make([]map[string]any, 0, len(liveMembers))
+				for _, m := range liveMembers {
+					caps, _ := json.Marshal(m.Capabilities)
+					chs, _ := json.Marshal(m.Channels)
+					out = append(out, map[string]any{
+						"agent_id":     m.AgentID,
+						"agent_name":   m.AgentName,
+						"soul_summary": m.SoulSummary,
+						"capabilities": string(caps),
+						"channels":     string(chs),
+						"model":        m.Model,
+						"role":         m.Role,
+						"status":       m.Status,
+						"last_seen":    m.LastSeen,
+					})
+				}
+				json.NewEncoder(w).Encode(out)
+				return
+			}
+
+			// Fallback: DB roster
 			members, err := timeSvc.ListGroupMembers()
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -658,7 +919,7 @@ func runGateway(cmd *cobra.Command, args []string) {
 			}
 
 			setupGroupBusSubscription(mgr, msgBus)
-			kafkaCancel := startGrpKafka(grpCfg, mgr, ctx)
+			kafkaCancel := startGrpKafka(grpCfg, mgr, ctx, orchDiscoveryHandler(orch))
 			grpState.SetManager(mgr, kafkaCancel)
 
 			// Persist settings
@@ -880,6 +1141,570 @@ func runGateway(cmd *cobra.Command, args []string) {
 				traces = []timeline.GroupTrace{}
 			}
 			json.NewEncoder(w).Encode(traces)
+		})
+
+		// API: Group Memory (GET/POST)
+		mux.HandleFunc("/api/v1/group/memory", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Content-Type", "application/json")
+			if r.Method == "OPTIONS" {
+				return
+			}
+
+			if r.Method == "POST" {
+				mgr := grpState.Manager()
+				if mgr == nil || !mgr.Active() {
+					http.Error(w, "not in a group", http.StatusBadRequest)
+					return
+				}
+				var body struct {
+					Title       string   `json:"title"`
+					ContentType string   `json:"content_type"`
+					Content     string   `json:"content"`
+					Tags        []string `json:"tags"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					http.Error(w, "invalid body", http.StatusBadRequest)
+					return
+				}
+				if body.ContentType == "" {
+					body.ContentType = "text/plain"
+				}
+				if err := mgr.ShareMemory(ctx, body.Title, body.ContentType, []byte(body.Content), body.Tags); err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				json.NewEncoder(w).Encode(map[string]string{"status": "shared"})
+				return
+			}
+
+			// GET: list memory items
+			authorID := r.URL.Query().Get("author_id")
+			limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+			if limit == 0 {
+				limit = 50
+			}
+			offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+
+			items, err := timeSvc.ListGroupMemoryItems(authorID, limit, offset)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if items == nil {
+				items = []timeline.GroupMemoryItemRecord{}
+			}
+			json.NewEncoder(w).Encode(items)
+		})
+
+		// API: Group Skills (GET/POST)
+		mux.HandleFunc("/api/v1/group/skills", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Content-Type", "application/json")
+			if r.Method == "OPTIONS" {
+				return
+			}
+
+			if r.Method == "POST" {
+				mgr := grpState.Manager()
+				if mgr == nil || !mgr.Active() {
+					http.Error(w, "not in a group", http.StatusBadRequest)
+					return
+				}
+				var body struct {
+					SkillName string `json:"skill_name"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					http.Error(w, "invalid body", http.StatusBadRequest)
+					return
+				}
+				if body.SkillName == "" {
+					http.Error(w, "skill_name required", http.StatusBadRequest)
+					return
+				}
+				if err := mgr.RegisterSkill(ctx, body.SkillName, grpState.Consumer()); err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				json.NewEncoder(w).Encode(map[string]string{"status": "registered", "skill": body.SkillName})
+				return
+			}
+
+			// GET: list skill channels
+			groupName := r.URL.Query().Get("group_name")
+			if groupName == "" {
+				if mgr := grpState.Manager(); mgr != nil {
+					groupName = mgr.GroupName()
+				}
+			}
+			channels, err := timeSvc.ListGroupSkillChannels(groupName)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if channels == nil {
+				channels = []timeline.GroupSkillChannelRecord{}
+			}
+			json.NewEncoder(w).Encode(channels)
+		})
+
+		// API: Submit Skill Task (POST)
+		mux.HandleFunc("/api/v1/group/skills/task", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Content-Type", "application/json")
+			if r.Method == "OPTIONS" {
+				return
+			}
+			if r.Method != "POST" {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
+			mgr := grpState.Manager()
+			if mgr == nil || !mgr.Active() {
+				http.Error(w, "not in a group", http.StatusBadRequest)
+				return
+			}
+
+			var body struct {
+				SkillName   string `json:"skill_name"`
+				Description string `json:"description"`
+				Content     string `json:"content"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, "invalid body", http.StatusBadRequest)
+				return
+			}
+			if body.SkillName == "" {
+				http.Error(w, "skill_name required", http.StatusBadRequest)
+				return
+			}
+
+			taskID := newTraceID()
+			if err := mgr.SubmitSkillTask(ctx, taskID, body.SkillName, body.Description, body.Content); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]string{"status": "submitted", "task_id": taskID, "skill": body.SkillName})
+		})
+
+		// API: Group Onboard (POST)
+		mux.HandleFunc("/api/v1/group/onboard", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Content-Type", "application/json")
+			if r.Method == "OPTIONS" {
+				return
+			}
+			if r.Method != "POST" {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
+			mgr := grpState.Manager()
+			if mgr == nil {
+				http.Error(w, "group not configured", http.StatusBadRequest)
+				return
+			}
+
+			if err := mgr.Onboard(ctx); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]string{"status": "onboard_request_sent"})
+		})
+
+		// API: Group Membership History (GET)
+		mux.HandleFunc("/api/v1/group/membership/history", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Content-Type", "application/json")
+
+			agentID := r.URL.Query().Get("agent_id")
+			groupName := r.URL.Query().Get("group_name")
+			limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+			if limit == 0 {
+				limit = 50
+			}
+			offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+
+			history, err := timeSvc.GetMembershipHistory(agentID, groupName, limit, offset)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if history == nil {
+				history = []timeline.GroupMembershipHistoryRecord{}
+			}
+			json.NewEncoder(w).Encode(history)
+		})
+
+		// API: Previous Group Members (GET)
+		mux.HandleFunc("/api/v1/group/members/previous", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Content-Type", "application/json")
+
+			members, err := timeSvc.ListPreviousGroupMembers()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if members == nil {
+				members = []timeline.GroupMemberRecord{}
+			}
+			json.NewEncoder(w).Encode(members)
+		})
+
+		// API: Group Rejoin (POST)
+		mux.HandleFunc("/api/v1/group/rejoin", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Content-Type", "application/json")
+			if r.Method == "OPTIONS" {
+				return
+			}
+			if r.Method != "POST" {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
+			var body struct {
+				AgentID   string `json:"agent_id"`
+				GroupName string `json:"group_name"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, "invalid body", http.StatusBadRequest)
+				return
+			}
+			if body.AgentID == "" {
+				http.Error(w, "agent_id required", http.StatusBadRequest)
+				return
+			}
+
+			// Look up previous config from membership history
+			groupName := body.GroupName
+			if groupName == "" {
+				if mgr := grpState.Manager(); mgr != nil {
+					groupName = mgr.GroupName()
+				}
+			}
+
+			prevConfig, err := timeSvc.GetLatestMembershipConfig(body.AgentID, groupName)
+			if err != nil {
+				http.Error(w, "no previous config found for this agent", http.StatusNotFound)
+				return
+			}
+
+			// Reactivate the member in the roster
+			if err := timeSvc.ReactivateGroupMember(body.AgentID); err != nil {
+				http.Error(w, fmt.Sprintf("reactivate failed: %v", err), http.StatusInternalServerError)
+				return
+			}
+
+			json.NewEncoder(w).Encode(map[string]any{
+				"status":          "rejoined",
+				"agent_id":        body.AgentID,
+				"restored_config": prevConfig,
+			})
+		})
+
+		// API: Group Stats (GET)
+		mux.HandleFunc("/api/v1/group/stats", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Content-Type", "application/json")
+
+			stats, err := timeSvc.GetGroupStats()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			json.NewEncoder(w).Encode(stats)
+		})
+
+		// API: Unified Audit Log (GET)
+		mux.HandleFunc("/api/v1/group/audit", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Content-Type", "application/json")
+
+			limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+			if limit == 0 {
+				limit = 50
+			}
+			offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+
+			filter := timeline.AuditFilter{
+				Source:    r.URL.Query().Get("source"),
+				EventType: r.URL.Query().Get("event_type"),
+				AgentID:  r.URL.Query().Get("agent_id"),
+				Limit:    limit,
+				Offset:   offset,
+			}
+
+			entries, err := timeSvc.ListUnifiedAudit(filter)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if entries == nil {
+				entries = []timeline.UnifiedAuditEntry{}
+			}
+			json.NewEncoder(w).Encode(entries)
+		})
+
+		// API: Group Topic Manifest (GET)
+		mux.HandleFunc("/api/v1/group/manifest", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Content-Type", "application/json")
+
+			mgr := grpState.Manager()
+			if mgr == nil {
+				json.NewEncoder(w).Encode(map[string]any{"error": "no group manager"})
+				return
+			}
+			tm := mgr.TopicManager()
+			if tm == nil {
+				json.NewEncoder(w).Encode(map[string]any{"error": "no topic manager"})
+				return
+			}
+			json.NewEncoder(w).Encode(tm.Manifest())
+		})
+
+		// API: Group Topics — enriched topic list with stats (GET), browse messages (?browse=topicName)
+		mux.HandleFunc("/api/v1/group/topics", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Content-Type", "application/json")
+
+			// Browse mode: return recent messages for a specific topic
+			if browseTopic := r.URL.Query().Get("browse"); browseTopic != "" {
+				limitStr := r.URL.Query().Get("limit")
+				limit := 50
+				if n, err := strconv.Atoi(limitStr); err == nil && n > 0 {
+					limit = n
+				}
+				msgs, err := timeSvc.GetTopicMessages(browseTopic, limit)
+				if err != nil {
+					json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
+					return
+				}
+				if msgs == nil {
+					msgs = []timeline.TopicMessageLogRecord{}
+				}
+				json.NewEncoder(w).Encode(map[string]any{"messages": msgs})
+				return
+			}
+
+			// Build enriched topic list: manifest + stats + health
+			mgr := grpState.Manager()
+			var coreTopics, skillTopics []map[string]any
+
+			// Get manifest topics
+			if mgr != nil {
+				if tm := mgr.TopicManager(); tm != nil {
+					manifest := tm.Manifest()
+					for _, td := range manifest.CoreTopics {
+						coreTopics = append(coreTopics, map[string]any{
+							"name": td.Name, "category": td.Category,
+							"description": td.Description, "consumers": td.Consumers,
+						})
+					}
+					for _, td := range manifest.SkillTopics {
+						skillTopics = append(skillTopics, map[string]any{
+							"name": td.Name, "category": td.Category,
+							"description": td.Description, "consumers": td.Consumers,
+						})
+					}
+				}
+			}
+			if coreTopics == nil {
+				coreTopics = []map[string]any{}
+			}
+			if skillTopics == nil {
+				skillTopics = []map[string]any{}
+			}
+
+			// Merge stats into topics
+			topicStats, _ := timeSvc.GetTopicStats()
+			statsMap := make(map[string]timeline.TopicStat)
+			for _, ts := range topicStats {
+				statsMap[ts.TopicName] = ts
+			}
+			topicHealth, _ := timeSvc.GetTopicHealth()
+			healthMap := make(map[string]timeline.TopicHealth)
+			for _, th := range topicHealth {
+				healthMap[th.TopicName] = th
+			}
+
+			for i, t := range coreTopics {
+				name := t["name"].(string)
+				if st, ok := statsMap[name]; ok {
+					coreTopics[i]["stats"] = st
+				}
+				if h, ok := healthMap[name]; ok {
+					coreTopics[i]["health"] = h
+				}
+			}
+			for i, t := range skillTopics {
+				name := t["name"].(string)
+				if st, ok := statsMap[name]; ok {
+					skillTopics[i]["stats"] = st
+				}
+				if h, ok := healthMap[name]; ok {
+					skillTopics[i]["health"] = h
+				}
+			}
+
+			// XP leaderboard
+			xp, _ := timeSvc.GetAgentXP()
+			if xp == nil {
+				xp = []timeline.AgentXP{}
+			}
+
+			json.NewEncoder(w).Encode(map[string]any{
+				"topics":         coreTopics,
+				"skill_topics":   skillTopics,
+				"xp_leaderboard": xp,
+			})
+		})
+
+		// API: Group Topic Flow Data (GET)
+		mux.HandleFunc("/api/v1/group/topics/flow", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Content-Type", "application/json")
+
+			flow, err := timeSvc.GetTopicFlowData()
+			if err != nil {
+				json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
+				return
+			}
+			if flow == nil {
+				flow = []timeline.TopicFlowEdge{}
+			}
+			json.NewEncoder(w).Encode(map[string]any{"edges": flow})
+		})
+
+		// API: Group Topic Health (GET)
+		mux.HandleFunc("/api/v1/group/topics/health", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Content-Type", "application/json")
+
+			health, err := timeSvc.GetTopicHealth()
+			if err != nil {
+				json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
+				return
+			}
+			if health == nil {
+				health = []timeline.TopicHealth{}
+			}
+			json.NewEncoder(w).Encode(map[string]any{"health": health})
+		})
+
+		// API: Group Topic Ensure (POST)
+		mux.HandleFunc("/api/v1/group/topics/ensure", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Content-Type", "application/json")
+
+			if r.Method == "OPTIONS" {
+				return
+			}
+			if r.Method != "POST" {
+				http.Error(w, "POST only", http.StatusMethodNotAllowed)
+				return
+			}
+
+			mgr := grpState.Manager()
+			if mgr == nil {
+				json.NewEncoder(w).Encode(map[string]any{"error": "no group manager"})
+				return
+			}
+
+			var body struct {
+				TopicName string `json:"topic_name"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.TopicName == "" {
+				http.Error(w, "topic_name required", http.StatusBadRequest)
+				return
+			}
+
+			if err := mgr.EnsureTopic(r.Context(), body.TopicName); err != nil {
+				json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
+				return
+			}
+			// Log the ensure event locally so stats are immediately visible
+			// (the Kafka round-trip may not complete before the UI refreshes).
+			_ = timeSvc.LogTopicMessage(&timeline.TopicMessageLogRecord{
+				TopicName:     body.TopicName,
+				SenderID:      mgr.AgentID(),
+				EnvelopeType:  "heartbeat",
+				CorrelationID: "ensure",
+				PayloadSize:   0,
+			})
+			json.NewEncoder(w).Encode(map[string]any{"ok": true, "topic": body.TopicName})
+		})
+
+		// API: Group Agent XP Leaderboard (GET)
+		mux.HandleFunc("/api/v1/group/topics/xp", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Content-Type", "application/json")
+
+			xp, err := timeSvc.GetAgentXP()
+			if err != nil {
+				json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
+				return
+			}
+			if xp == nil {
+				xp = []timeline.AgentXP{}
+			}
+			json.NewEncoder(w).Encode(map[string]any{"leaderboard": xp})
+		})
+
+		// API: Group Topic Density (GET) — hourly buckets + envelope types for sparkline popup
+		mux.HandleFunc("/api/v1/group/topics/density", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Content-Type", "application/json")
+
+			topicName := r.URL.Query().Get("topic")
+			if topicName == "" {
+				http.Error(w, "topic parameter required", http.StatusBadRequest)
+				return
+			}
+			hours := 48
+			if h, err := strconv.Atoi(r.URL.Query().Get("hours")); err == nil && h > 0 {
+				hours = h
+			}
+
+			buckets, err := timeSvc.GetTopicMessageDensity(topicName, hours)
+			if err != nil {
+				json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
+				return
+			}
+			if buckets == nil {
+				buckets = []timeline.TopicDensityBucket{}
+			}
+
+			envTypes, err := timeSvc.GetTopicEnvelopeTypeCounts(topicName)
+			if err != nil {
+				json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
+				return
+			}
+			if envTypes == nil {
+				envTypes = map[string]int{}
+			}
+
+			json.NewEncoder(w).Encode(map[string]any{
+				"topic":          topicName,
+				"hours":          hours,
+				"buckets":        buckets,
+				"envelope_types": envTypes,
+			})
 		})
 
 		// API: Settings (GET/POST)
@@ -1586,6 +2411,12 @@ func runGateway(cmd *cobra.Command, args []string) {
 			}
 
 			// Log inbound from Web UI
+			webuiInMeta, _ := json.Marshal(map[string]any{
+				"channel":      "webui",
+				"sender":       user.Name,
+				"message_type": "TEXT",
+				"content":      body.Message,
+			})
 			_ = timeSvc.AddEvent(&timeline.TimelineEvent{
 				EventID:        fmt.Sprintf("WEBUI_IN_%d", time.Now().UnixNano()),
 				TraceID:        traceID,
@@ -1596,6 +2427,7 @@ func runGateway(cmd *cobra.Command, args []string) {
 				ContentText:    body.Message,
 				Classification: "WEBUI_INBOUND",
 				Authorized:     true,
+				Metadata:       string(webuiInMeta),
 			})
 
 			// Publish inbound to agent
@@ -1659,6 +2491,73 @@ func runGateway(cmd *cobra.Command, args []string) {
 			json.NewEncoder(w).Encode(task)
 		})
 
+		// API: Pending Approvals (GET)
+		mux.HandleFunc("/api/v1/approvals/pending", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Content-Type", "application/json")
+
+			approvals, err := timeSvc.GetPendingApprovals()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if approvals == nil {
+				approvals = []timeline.ApprovalRecord{}
+			}
+			json.NewEncoder(w).Encode(approvals)
+		})
+
+		// API: Respond to Approval (POST)
+		mux.HandleFunc("/api/v1/approvals/", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Content-Type", "application/json")
+
+			if r.Method == "OPTIONS" {
+				w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			if r.Method != "POST" {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
+			approvalID := strings.TrimPrefix(r.URL.Path, "/api/v1/approvals/")
+			approvalID = strings.TrimSpace(approvalID)
+			if approvalID == "" || approvalID == "pending" {
+				http.Error(w, "approval_id required", http.StatusBadRequest)
+				return
+			}
+
+			var body struct {
+				Approved bool `json:"approved"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, "invalid JSON body", http.StatusBadRequest)
+				return
+			}
+
+			// Inject approval response into the bus
+			action := "deny"
+			if body.Approved {
+				action = "approve"
+			}
+			msgBus.PublishInbound(&bus.InboundMessage{
+				Channel:   "webui",
+				SenderID:  "webui:admin",
+				ChatID:    "approval",
+				TraceID:   newTraceID(),
+				Content:   fmt.Sprintf("%s:%s", action, approvalID),
+				Timestamp: time.Now(),
+				Metadata: map[string]any{
+					bus.MetaKeyMessageType: bus.MessageTypeInternal,
+				},
+			})
+
+			json.NewEncoder(w).Encode(map[string]string{"status": "sent", "approval_id": approvalID})
+		})
+
 		// Static: Media
 		mediaDir := filepath.Join(cfg.Paths.Workspace, "media")
 		fs := http.FileServer(http.Dir(mediaDir))
@@ -1674,6 +2573,11 @@ func runGateway(cmd *cobra.Command, args []string) {
 			http.ServeFile(w, r, "web/group.html")
 		})
 
+		// SPA: Approvals
+		mux.HandleFunc("/approvals", func(w http.ResponseWriter, r *http.Request) {
+			http.ServeFile(w, r, "web/approvals.html")
+		})
+
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/" {
 				http.Redirect(w, r, "/timeline", http.StatusFound)
@@ -1684,12 +2588,53 @@ func runGateway(cmd *cobra.Command, args []string) {
 			cfg.Gateway.DashboardPort = 18791
 		}
 		addr := fmt.Sprintf("%s:%d", cfg.Gateway.Host, cfg.Gateway.DashboardPort)
-		fmt.Printf("🖥️  Dashboard listening on http://%s\n", addr)
 
-		// Startup Probe
-		if err := http.ListenAndServe(addr, mux); err != nil {
-			fmt.Printf("❌ Dashboard Server FAILED to start: %v\n", err)
-			cancel() // Stop the whole gateway if dashboard fails
+		// Wrap mux with auth middleware if AuthToken is configured
+		var handler http.Handler = mux
+		if cfg.Gateway.AuthToken != "" {
+			authToken := cfg.Gateway.AuthToken
+			handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Skip auth for status endpoint (health check) and CORS preflight
+				if r.URL.Path == "/api/v1/status" || r.Method == "OPTIONS" {
+					mux.ServeHTTP(w, r)
+					return
+				}
+				token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+				if token != authToken {
+					http.Error(w, "unauthorized", http.StatusUnauthorized)
+					return
+				}
+				mux.ServeHTTP(w, r)
+			})
+			fmt.Println("🔒 Auth token required for dashboard API")
+		}
+
+		// TLS support
+		if cfg.Gateway.TLSCert != "" && cfg.Gateway.TLSKey != "" {
+			fmt.Printf("🖥️  Dashboard listening on https://%s\n", addr)
+			cert, err := tls.LoadX509KeyPair(cfg.Gateway.TLSCert, cfg.Gateway.TLSKey)
+			if err != nil {
+				fmt.Printf("❌ TLS cert load failed: %v\n", err)
+				cancel()
+				return
+			}
+			server := &http.Server{
+				Addr:    addr,
+				Handler: handler,
+				TLSConfig: &tls.Config{
+					Certificates: []tls.Certificate{cert},
+				},
+			}
+			if err := server.ListenAndServeTLS("", ""); err != nil {
+				fmt.Printf("❌ Dashboard Server FAILED to start: %v\n", err)
+				cancel()
+			}
+		} else {
+			fmt.Printf("🖥️  Dashboard listening on http://%s\n", addr)
+			if err := http.ListenAndServe(addr, handler); err != nil {
+				fmt.Printf("❌ Dashboard Server FAILED to start: %v\n", err)
+				cancel()
+			}
 		}
 	}()
 
@@ -1700,6 +2645,15 @@ func runGateway(cmd *cobra.Command, args []string) {
 			cancel()
 		}
 	}()
+
+	// Start Orchestrator (if configured)
+	if orch != nil {
+		go func() {
+			if err := orch.Start(ctx); err != nil {
+				fmt.Printf("⚠️ Orchestrator start failed: %v\n", err)
+			}
+		}()
+	}
 
 	// Start Group Collaboration (if configured)
 	if mgr := grpState.Manager(); mgr != nil {
@@ -1718,7 +2672,7 @@ func runGateway(cmd *cobra.Command, args []string) {
 		}()
 
 		// Start Kafka consumer if brokers are configured
-		kafkaCancel := startGrpKafka(cfg.Group, mgr, ctx)
+		kafkaCancel := startGrpKafka(cfg.Group, mgr, ctx, orchDiscoveryHandler(orch))
 		grpState.SetManager(mgr, kafkaCancel)
 	}
 
@@ -1726,6 +2680,12 @@ func runGateway(cmd *cobra.Command, args []string) {
 	<-sigChan
 
 	fmt.Println("Shutting down...")
+	// Stop orchestrator
+	if orch != nil {
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = orch.Stop(stopCtx)
+		stopCancel()
+	}
 	// Leave group cleanly
 	if mgr := grpState.Manager(); mgr != nil && mgr.Active() {
 		leaveCtx, leaveCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1832,17 +2792,43 @@ func isWithin(root, path string) bool {
 	return !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".."
 }
 
+// orchDiscoveryHandler builds an OrchestratorHandler that routes envelope payloads
+// to the orchestrator's HandleDiscovery. Returns nil if orch is nil.
+func orchDiscoveryHandler(orch *orchestrator.Orchestrator) group.OrchestratorHandler {
+	if orch == nil {
+		return nil
+	}
+	return func(env *group.GroupEnvelope) {
+		data, err := json.Marshal(env.Payload)
+		if err != nil {
+			return
+		}
+		var payload orchestrator.DiscoveryPayload
+		if err := json.Unmarshal(data, &payload); err != nil {
+			return
+		}
+		orch.HandleDiscovery(payload)
+	}
+}
+
 // groupState manages the lifecycle of the group manager at runtime.
 type groupState struct {
-	mu     sync.RWMutex
-	mgr    *group.Manager
-	cancel context.CancelFunc // cancels Kafka consumer goroutine
+	mu       sync.RWMutex
+	mgr      *group.Manager
+	consumer group.Consumer
+	cancel   context.CancelFunc // cancels Kafka consumer goroutine
 }
 
 func (gs *groupState) Manager() *group.Manager {
 	gs.mu.RLock()
 	defer gs.mu.RUnlock()
 	return gs.mgr
+}
+
+func (gs *groupState) Consumer() group.Consumer {
+	gs.mu.RLock()
+	defer gs.mu.RUnlock()
+	return gs.consumer
 }
 
 func (gs *groupState) SetManager(mgr *group.Manager, cancel context.CancelFunc) {
@@ -1852,6 +2838,12 @@ func (gs *groupState) SetManager(mgr *group.Manager, cancel context.CancelFunc) 
 	gs.cancel = cancel
 }
 
+func (gs *groupState) SetConsumer(c group.Consumer) {
+	gs.mu.Lock()
+	defer gs.mu.Unlock()
+	gs.consumer = c
+}
+
 func (gs *groupState) Clear() {
 	gs.mu.Lock()
 	defer gs.mu.Unlock()
@@ -1859,6 +2851,7 @@ func (gs *groupState) Clear() {
 		gs.cancel()
 	}
 	gs.mgr = nil
+	gs.consumer = nil
 	gs.cancel = nil
 }
 
@@ -1894,4 +2887,8 @@ func (a *groupTraceAdapter) PublishTrace(ctx context.Context, payload interface{
 	default:
 		return fmt.Errorf("unsupported trace payload type: %T", payload)
 	}
+}
+
+func (a *groupTraceAdapter) PublishAudit(ctx context.Context, eventType, traceID, detail string) error {
+	return a.mgr.PublishAudit(ctx, eventType, traceID, detail)
 }
