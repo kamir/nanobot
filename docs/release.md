@@ -24,6 +24,8 @@ make release-patch    # bumps PATCH, builds
 - `git push`
 - `git push --tags`
 
+Note: release commits are created from the **repository root** (all changes in the repo are included).
+
 ## GitHub Actions
 - Workflow: `.github/workflows/release-go.yml`
 - Trigger: tag push `v*` or manual `workflow_dispatch`

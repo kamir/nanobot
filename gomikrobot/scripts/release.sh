@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ROOT_GO="${ROOT_DIR}/cmd/gomikrobot/cmd/root.go"
+GIT_ROOT="$(git -C "$ROOT_DIR" rev-parse --show-toplevel)"
 
 if [[ ! -f "$ROOT_GO" ]]; then
   echo "root.go not found: $ROOT_GO" >&2
@@ -44,7 +46,7 @@ perl -0777 -i -pe "s/version = \\\"$CURRENT\\\"/version = \\\"$NEXT\\\"/g" "$ROO
 
 echo "Version bumped: $CURRENT -> $NEXT"
 
-git add "$ROOT_GO"
+git -C "$GIT_ROOT" add -A
 git commit -m "Release v$NEXT"
 git tag "v$NEXT"
 git push
