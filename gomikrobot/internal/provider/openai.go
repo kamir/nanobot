@@ -29,7 +29,7 @@ func NewOpenAIProvider(apiKey, apiBase, defaultModel string) *OpenAIProvider {
 		apiBase = "https://api.openai.com/v1"
 	}
 	if defaultModel == "" {
-		defaultModel = "gpt-4o"
+		defaultModel = "anthropic/claude-sonnet-4-5"
 	}
 	return &OpenAIProvider{
 		apiKey:       apiKey,
@@ -262,6 +262,72 @@ func (p *OpenAIProvider) Transcribe(ctx context.Context, req *AudioRequest) (*Au
 	}
 
 	return &AudioResponse{Text: audioResp.Text}, nil
+}
+
+// Embed generates an embedding vector for the given input text.
+func (p *OpenAIProvider) Embed(ctx context.Context, req *EmbeddingRequest) (*EmbeddingResponse, error) {
+	model := req.Model
+	if model == "" {
+		model = "text-embedding-3-small"
+	}
+
+	body := map[string]any{
+		"model": model,
+		"input": req.Input,
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal embedding request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.apiBase+"/embeddings", bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("create embedding request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+
+	resp, err := p.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("execute embedding request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read embedding response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("embedding API error (status %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var embResp struct {
+		Data []struct {
+			Embedding []float32 `json:"embedding"`
+		} `json:"data"`
+		Usage struct {
+			PromptTokens int `json:"prompt_tokens"`
+			TotalTokens  int `json:"total_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(respBody, &embResp); err != nil {
+		return nil, fmt.Errorf("parse embedding response: %w", err)
+	}
+
+	if len(embResp.Data) == 0 {
+		return nil, fmt.Errorf("no embedding data in response")
+	}
+
+	return &EmbeddingResponse{
+		Vector: embResp.Data[0].Embedding,
+		Usage: Usage{
+			PromptTokens: embResp.Usage.PromptTokens,
+			TotalTokens:  embResp.Usage.TotalTokens,
+		},
+	}, nil
 }
 
 // Speak converts text to audio using OpenAI TTS API.

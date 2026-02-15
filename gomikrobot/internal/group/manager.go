@@ -303,6 +303,16 @@ func (m *Manager) RespondTask(ctx context.Context, taskID, content, status strin
 	return m.lfs.ProduceEnvelope(ctx, m.topics.Responses, env)
 }
 
+// Config returns the current group configuration.
+func (m *Manager) Config() config.GroupConfig {
+	return m.cfg
+}
+
+// AgentID returns this agent's ID.
+func (m *Manager) AgentID() string {
+	return m.identity.AgentID
+}
+
 // LFSHealthy returns whether the LFS proxy is reachable.
 func (m *Manager) LFSHealthy() bool {
 	return m.lfs.Healthy(context.Background())

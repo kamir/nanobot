@@ -34,15 +34,22 @@ func runAgent(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
+	printHeader("🤖 GoMikroBot Agent")
+
 	// Load Config
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Printf("Config warning: %v (using defaults)\n", err)
 	}
+	if warn, err := config.EnsureWorkRepo(cfg.Paths.WorkRepoPath); err != nil {
+		fmt.Printf("Work repo error: %v\n", err)
+	} else if warn != "" {
+		fmt.Printf("Work repo warning: %s\n", warn)
+	}
 
 	// Setup components
 	msgBus := bus.NewMessageBus()
-	oaProv := provider.NewOpenAIProvider(cfg.Providers.OpenAI.APIKey, cfg.Providers.OpenAI.APIBase, cfg.Agents.Defaults.Model)
+	oaProv := provider.NewOpenAIProvider(cfg.Providers.OpenAI.APIKey, cfg.Providers.OpenAI.APIBase, cfg.Model.Name)
 	var prov provider.LLMProvider = oaProv
 
 	if cfg.Providers.LocalWhisper.Enabled {
@@ -58,12 +65,14 @@ func runAgent(cmd *cobra.Command, args []string) {
 	loop := agent.NewLoop(agent.LoopOptions{
 		Bus:           msgBus,
 		Provider:      prov,
-		Workspace:     cfg.Agents.Defaults.Workspace,
-		Model:         cfg.Agents.Defaults.Model,
-		MaxIterations: cfg.Agents.Defaults.MaxToolIterations,
+		Workspace:     cfg.Paths.Workspace,
+		WorkRepo:      cfg.Paths.WorkRepoPath,
+		SystemRepo:    cfg.Paths.SystemRepoPath,
+		Model:         cfg.Model.Name,
+		MaxIterations: cfg.Model.MaxToolIterations,
 	})
 
-	fmt.Printf("🤖 GoMikroBot (%s)\n", cfg.Agents.Defaults.Model)
+	fmt.Printf("🤖 GoMikroBot (%s)\n", cfg.Model.Name)
 	fmt.Println("Thinking...")
 
 	ctx := context.Background()

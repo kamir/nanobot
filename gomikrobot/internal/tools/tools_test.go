@@ -73,7 +73,7 @@ func TestReadFileTool(t *testing.T) {
 }
 
 func TestWriteFileTool(t *testing.T) {
-	tool := NewWriteFileTool()
+	tool := NewWriteFileTool(func() string { return "" })
 	tmpDir := t.TempDir()
 
 	// Test write new file
@@ -97,7 +97,7 @@ func TestWriteFileTool(t *testing.T) {
 }
 
 func TestEditFileTool(t *testing.T) {
-	tool := NewEditFileTool()
+	tool := NewEditFileTool(func() string { return "" })
 	tmpDir := t.TempDir()
 
 	// Create file to edit

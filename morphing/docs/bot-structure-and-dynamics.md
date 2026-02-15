@@ -15,6 +15,7 @@ flowchart LR
     FS[Feishu]
     CLI[CLI]
     API[Local HTTP API]
+    WUI[Web UI Chat]
   end
 
   subgraph Bus[Message Bus]
@@ -34,6 +35,7 @@ flowchart LR
     HEART[Heartbeat]
     TL[Timeline DB]
     DASH[Timeline UI]
+    LINK[Web User Link Service]
   end
 
   Channels --> IN
@@ -52,11 +54,16 @@ flowchart LR
 
   WA --> TL
   TL --> DASH
+  WUI --> TL
+  LINK --> TL
+  WUI --> LINK
 ```
 
 **What it can deal with (capability map):**
 - Inbound chat messages from WhatsApp, Telegram, Discord, Feishu, CLI, and local HTTP API.
 - Outbound replies to the same channels.
+- Web UI chat messages routed into the agent loop and delivered to linked WhatsApp users.
+- Simple Web-User onboarding and WhatsApp link management (no OAuth).
 - Tool-driven actions: filesystem read/write/edit/list, shell exec, web search/fetch, cron scheduling, subagent spawn, message tool.
 - Session history and memory context per channel/chat.
 - Timeline logging and media capture for WhatsApp (Go native).
@@ -179,6 +186,8 @@ sequenceDiagram
 
 - Inbound WhatsApp messages (text, image, audio, documents) with media download and optional transcription.
 - Outbound WhatsApp replies (subject to silent mode).
+- Web UI chat messages routed through agent loop and mirrored in timeline UI.
+- Web-User ↔ WhatsApp linking for outbound delivery to personal WhatsApp.
 - Local HTTP API endpoint for simple chat requests.
 - Timeline logging and UI for WhatsApp events.
 - File and shell tools for agent actions.
@@ -188,3 +197,58 @@ For more detail, see:
 - `gomikrobot/internal/agent/loop.go`
 - `gomikrobot/internal/bus/bus.go`
 - `gomikrobot/cmd/gomikrobot/cmd/gateway.go`
+
+---
+
+## Web UI Chat Flow
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant W as Web UI Chat Box
+  participant API as Gateway API
+  participant B as Message Bus
+  participant A as Agent Loop
+  participant L as Link Service
+  participant WA as WhatsApp Channel
+  participant TL as Timeline DB
+
+  W->>API: POST /api/v1/webchat/send
+  API->>B: PublishInbound(channel=webui)
+  B->>A: ConsumeInbound
+  A->>B: PublishOutbound(channel=webui)
+  B->>L: Resolve web_user_id -> whatsapp_jid
+  L-->>B: whatsapp_jid
+  B->>WA: Send outbound to WhatsApp
+  B->>TL: Log webui outbound event
+  TL-->>W: UI fetch shows response
+```
+
+---
+
+## Timeline Storage Model (Go Native)
+
+**Primary store:** SQLite (`~/.gomikrobot/timeline.db`)
+
+**Core table:** `timeline`
+- `event_id`: Unique event identifier (channel-specific or generated).
+- `timestamp`: Event time.
+- `sender_id`: External sender or internal marker (e.g., `webui:alice`, `AGENT`).
+- `event_type`: `TEXT`, `SYSTEM`, or media types.
+- `content_text`: Text or summary.
+- `classification`: Routing/diagnostic tag (e.g., `WEBUI_OUTBOUND status=sent`).
+- `authorized`: Boolean allowlist indicator.
+
+**Aux tables:**
+- `settings` (includes `silent_mode`)
+- `web_users` (includes `force_send`)
+- `web_links` (Web User -> WhatsApp JID)
+
+**Logging policy (Go native):**
+- All inbound messages (WhatsApp, Web UI, Local API) are written to `timeline`.
+- All outbound responses are written to `timeline`, **even if suppressed**.
+- Outbound responses also print console logs with status for debugging.
+
+**Test gaps / TODO**
+- Add integration tests for timeline writes on outbound suppression paths.
+- Add tests covering Local API `/chat` inbound/outbound timeline events.

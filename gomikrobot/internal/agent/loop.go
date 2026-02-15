@@ -63,9 +63,10 @@ type Loop struct {
 	// activeTaskID tracks the current task being processed (for token accounting).
 	activeTaskID string
 	// activeSender tracks the sender of the current message (for policy checks).
-	activeSender  string
-	activeChannel string
-	activeTraceID string
+	activeSender      string
+	activeChannel     string
+	activeTraceID     string
+	activeMessageType string
 }
 
 // NewLoop creates a new agent loop.
@@ -184,6 +185,12 @@ func (l *Loop) ProcessDirectWithTrace(ctx context.Context, content, sessionKey, 
 		traceID = fmt.Sprintf("trace-%d", time.Now().UnixNano())
 	}
 
+	// CLI direct calls are always internal (owner). Bus-routed messages
+	// have activeMessageType set by processMessage before calling here.
+	if l.activeMessageType == "" {
+		l.activeMessageType = bus.MessageTypeInternal
+	}
+
 	// Get or create session
 	sess := l.sessions.GetOrCreate(sessionKey)
 	sess.AddMessage("user", content)
@@ -202,7 +209,7 @@ func (l *Loop) ProcessDirectWithTrace(ctx context.Context, content, sessionKey, 
 	}
 
 	// Build messages using the context builder
-	messages := l.contextBuilder.BuildMessages(sess, content, channel, chatID)
+	messages := l.contextBuilder.BuildMessages(sess, content, channel, chatID, l.activeMessageType)
 
 	// Inject RAG context from semantic memory
 	messages = l.injectRAGContext(ctx, messages, content)
@@ -828,6 +835,7 @@ func (l *Loop) processMessage(ctx context.Context, msg *bus.InboundMessage) (res
 			ChatID:         msg.ChatID,
 			SenderID:       msg.SenderID,
 			ContentIn:      msg.Content,
+			MessageType:    msg.MessageType(),
 		})
 		if createErr != nil {
 			slog.Warn("Failed to create task", "error", createErr)
@@ -842,6 +850,7 @@ func (l *Loop) processMessage(ctx context.Context, msg *bus.InboundMessage) (res
 	l.activeSender = msg.SenderID
 	l.activeChannel = msg.Channel
 	l.activeTraceID = msg.TraceID
+	l.activeMessageType = msg.MessageType()
 
 	// PROCESS
 	response, err = l.ProcessDirectWithTrace(ctx, msg.Content, sessionKey, msg.TraceID)
@@ -958,12 +967,13 @@ func (l *Loop) checkToolPolicy(toolName string, args map[string]any) (bool, stri
 	}
 
 	ctx := policy.Context{
-		Sender:    l.activeSender,
-		Channel:   l.activeChannel,
-		Tool:      toolName,
-		Tier:      tier,
-		Arguments: args,
-		TraceID:   l.activeTraceID,
+		Sender:      l.activeSender,
+		Channel:     l.activeChannel,
+		Tool:        toolName,
+		Tier:        tier,
+		Arguments:   args,
+		TraceID:     l.activeTraceID,
+		MessageType: l.activeMessageType,
 	}
 
 	decision := l.policy.Evaluate(ctx)

@@ -15,6 +15,13 @@ import (
 var DenyPatterns = []string{
 	`\brm\s+(-[rf]+\s+)*[/~]`, // rm with root or home
 	`\brm\s+-rf\b`,            // rm -rf anywhere
+	`\brm\s+-r[fF]?\s+\.\b`,   // rm -r . / rm -rf .
+	`\brm\s+-r[fF]?\s+\*`,     // rm -r *
+	`\brm\s+\*`,               // rm *
+	`\bgit\s+rm\b`,            // git rm
+	`\bfind\b.*\b-delete\b`,   // find -delete
+	`\bunlink\b`,              // unlink
+	`\brmdir\b`,               // rmdir
 	`\bdd\b.*\bof=/dev/`,      // dd to device
 	`\bmkfs\b`,                // filesystem format
 	`\bfdisk\b`,               // partition tool
@@ -30,6 +37,23 @@ var DenyPatterns = []string{
 	`\bsystemctl\s+(start|stop|restart|enable|disable)\b`, // systemd control
 }
 
+// AllowPatterns contains regex patterns for strict allow-list mode.
+var AllowPatterns = []string{
+	`(?i)^\s*git(\s|$)`,
+	`(?i)^\s*ls(\s|$)`,
+	`(?i)^\s*cat(\s|$)`,
+	`(?i)^\s*pwd(\s|$)`,
+	`(?i)^\s*rg(\s|$)`,
+	`(?i)^\s*grep(\s|$)`,
+	`(?i)^\s*sed(\s|$)`,
+	`(?i)^\s*head(\s|$)`,
+	`(?i)^\s*tail(\s|$)`,
+	`(?i)^\s*wc(\s|$)`,
+	`(?i)^\s*echo(\s|$)`,
+}
+
+const blockedAttackMessage = "Ey, du spinnst wohl? Hä?"
+
 // PathPatterns for detecting path traversal attempts.
 var PathPatterns = []string{
 	`\.\.\/`, // ../
@@ -43,12 +67,15 @@ type ExecTool struct {
 	Timeout             time.Duration
 	RestrictToWorkspace bool
 	WorkDir             string
+	workRepoGetter      func() string
 	denyRegexes         []*regexp.Regexp
 	pathRegexes         []*regexp.Regexp
+	allowRegexes        []*regexp.Regexp
+	StrictAllowList     bool
 }
 
 // NewExecTool creates a new ExecTool.
-func NewExecTool(timeout time.Duration, restrictToWorkspace bool, workDir string) *ExecTool {
+func NewExecTool(timeout time.Duration, restrictToWorkspace bool, workDir string, workRepoGetter func() string) *ExecTool {
 	// Compile deny patterns
 	denyRegexes := make([]*regexp.Regexp, 0, len(DenyPatterns))
 	for _, pattern := range DenyPatterns {
@@ -65,16 +92,28 @@ func NewExecTool(timeout time.Duration, restrictToWorkspace bool, workDir string
 		}
 	}
 
+	// Compile allow patterns
+	allowRegexes := make([]*regexp.Regexp, 0, len(AllowPatterns))
+	for _, pattern := range AllowPatterns {
+		if re, err := regexp.Compile(pattern); err == nil {
+			allowRegexes = append(allowRegexes, re)
+		}
+	}
+
 	return &ExecTool{
 		Timeout:             timeout,
 		RestrictToWorkspace: restrictToWorkspace,
 		WorkDir:             workDir,
+		workRepoGetter:      workRepoGetter,
 		denyRegexes:         denyRegexes,
 		pathRegexes:         pathRegexes,
+		allowRegexes:        allowRegexes,
+		StrictAllowList:     true,
 	}
 }
 
 func (t *ExecTool) Name() string { return "exec" }
+func (t *ExecTool) Tier() int    { return TierHighRisk }
 
 func (t *ExecTool) Description() string {
 	return "Execute a shell command and return its output."
@@ -99,7 +138,7 @@ func (t *ExecTool) Parameters() map[string]any {
 
 func (t *ExecTool) Execute(ctx context.Context, params map[string]any) (string, error) {
 	command := GetString(params, "command", "")
-	workingDir := GetString(params, "working_dir", t.WorkDir)
+	workingDir := GetString(params, "working_dir", t.defaultWorkDir())
 
 	if command == "" {
 		return "Error: command is required", nil
@@ -163,10 +202,24 @@ func (t *ExecTool) Execute(ctx context.Context, params map[string]any) (string, 
 }
 
 func (t *ExecTool) guardCommand(command, workingDir string) error {
+	// Strict allow-list mode
+	if t.StrictAllowList {
+		allowed := false
+		for _, re := range t.allowRegexes {
+			if re.MatchString(command) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return fmt.Errorf(blockedAttackMessage)
+		}
+	}
+
 	// Check deny patterns
 	for _, re := range t.denyRegexes {
 		if re.MatchString(command) {
-			return fmt.Errorf("Error: command blocked for safety: %s", re.String())
+			return fmt.Errorf(blockedAttackMessage)
 		}
 	}
 
@@ -178,15 +231,41 @@ func (t *ExecTool) guardCommand(command, workingDir string) error {
 			}
 		}
 
-		// Additional check: command shouldn't reference paths outside workspace
-		absWorkDir, _ := filepath.Abs(t.WorkDir)
-		if workingDir != "" && workingDir != t.WorkDir {
+		// Additional check: command shouldn't reference paths outside workspace or work repo
+		allowedRoots := []string{}
+		if absWorkDir, err := filepath.Abs(t.WorkDir); err == nil && absWorkDir != "" {
+			allowedRoots = append(allowedRoots, absWorkDir)
+		}
+		if t.workRepoGetter != nil {
+			if repo := t.workRepoGetter(); repo != "" {
+				if absRepo, err := filepath.Abs(repo); err == nil {
+					allowedRoots = append(allowedRoots, absRepo)
+				}
+			}
+		}
+		if workingDir != "" {
 			absWorkingDir, _ := filepath.Abs(workingDir)
-			if !strings.HasPrefix(absWorkingDir, absWorkDir) {
-				return fmt.Errorf("Error: working directory must be within workspace")
+			allowed := false
+			for _, root := range allowedRoots {
+				if strings.HasPrefix(absWorkingDir, root) {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				return fmt.Errorf(blockedAttackMessage)
 			}
 		}
 	}
 
 	return nil
+}
+
+func (t *ExecTool) defaultWorkDir() string {
+	if t.workRepoGetter != nil {
+		if repo := t.workRepoGetter(); repo != "" {
+			return repo
+		}
+	}
+	return t.WorkDir
 }

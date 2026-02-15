@@ -7,21 +7,43 @@ import (
 	"time"
 )
 
+// Well-known metadata keys and message type constants.
+const (
+	MetaKeyMessageType  = "message_type"
+	MetaKeyIsFromMe     = "is_from_me"
+	MessageTypeInternal = "internal"
+	MessageTypeExternal = "external"
+)
+
 // InboundMessage represents a message from a channel to the agent.
 type InboundMessage struct {
-	Channel   string         `json:"channel"`
-	SenderID  string         `json:"sender_id"`
-	ChatID    string         `json:"chat_id"`
-	Content   string         `json:"content"`
-	Media     []string       `json:"media,omitempty"`
-	Metadata  map[string]any `json:"metadata,omitempty"`
-	Timestamp time.Time      `json:"timestamp"`
+	Channel        string         `json:"channel"`
+	SenderID       string         `json:"sender_id"`
+	ChatID         string         `json:"chat_id"`
+	TraceID        string         `json:"trace_id"`
+	IdempotencyKey string         `json:"idempotency_key,omitempty"`
+	Content        string         `json:"content"`
+	Media          []string       `json:"media,omitempty"`
+	Metadata       map[string]any `json:"metadata,omitempty"`
+	Timestamp      time.Time      `json:"timestamp"`
+}
+
+// MessageType returns the message type from metadata, defaulting to external.
+func (m *InboundMessage) MessageType() string {
+	if m.Metadata != nil {
+		if v, ok := m.Metadata[MetaKeyMessageType].(string); ok && v != "" {
+			return v
+		}
+	}
+	return MessageTypeExternal
 }
 
 // OutboundMessage represents a message from the agent to a channel.
 type OutboundMessage struct {
 	Channel string `json:"channel"`
 	ChatID  string `json:"chat_id"`
+	TraceID string `json:"trace_id"`
+	TaskID  string `json:"task_id,omitempty"`
 	Content string `json:"content"`
 }
 

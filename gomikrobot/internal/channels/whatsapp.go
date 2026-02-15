@@ -2,6 +2,8 @@ package channels
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -36,6 +38,9 @@ type WhatsAppChannel struct {
 	provider  provider.LLMProvider
 	timeline  *timeline.TimelineService
 	sendFn    func(ctx context.Context, msg *bus.OutboundMessage) error
+	allowlist map[string]bool
+	denylist  map[string]bool
+	token     string
 	mu        sync.Mutex
 }
 
@@ -82,6 +87,8 @@ func (c *WhatsAppChannel) Start(ctx context.Context) error {
 	// Create client
 	c.client = whatsmeow.NewClient(deviceStore, clientLog)
 	c.client.AddEventHandler(c.eventHandler)
+
+	c.loadAuthSettings()
 
 	// Login if needed
 	if c.client.Store.ID == nil {
@@ -159,13 +166,37 @@ func (c *WhatsAppChannel) handleOutbound(msg *bus.OutboundMessage) {
 	// Check silent mode — never send if enabled
 	if c.timeline != nil && c.timeline.IsSilentMode() {
 		fmt.Printf("🔇 Silent Mode: suppressed outbound to %s reason=silent_mode channel=%s\n", msg.ChatID, c.Name())
+		c.logOutbound("suppressed", msg)
+		if c.timeline != nil && msg.TaskID != "" {
+			_ = c.timeline.UpdateTaskDelivery(msg.TaskID, timeline.DeliverySkipped, nil)
+		}
 		return
 	}
 	sendCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := c.sendOutbound(sendCtx, msg); err != nil {
 		fmt.Printf("Error sending whatsapp message: %v\n", err)
+		c.logOutbound("error", msg)
+		// Mark delivery as pending for retry with backoff
+		if c.timeline != nil && msg.TaskID != "" {
+			nextAt := deliveryBackoff(0)
+			_ = c.timeline.UpdateTaskDelivery(msg.TaskID, timeline.DeliveryPending, &nextAt)
+		}
+		return
 	}
+	c.logOutbound("sent", msg)
+	if c.timeline != nil && msg.TaskID != "" {
+		_ = c.timeline.UpdateTaskDelivery(msg.TaskID, timeline.DeliverySent, nil)
+	}
+}
+
+func deliveryBackoff(attempts int) time.Time {
+	delay := 30 * time.Second * time.Duration(1<<uint(attempts))
+	maxDelay := 5 * time.Minute
+	if delay > maxDelay {
+		delay = maxDelay
+	}
+	return time.Now().Add(delay)
 }
 
 func (c *WhatsAppChannel) sendOutbound(ctx context.Context, msg *bus.OutboundMessage) error {
@@ -173,6 +204,27 @@ func (c *WhatsAppChannel) sendOutbound(ctx context.Context, msg *bus.OutboundMes
 		return c.sendFn(ctx, msg)
 	}
 	return c.Send(ctx, msg)
+}
+
+func (c *WhatsAppChannel) logOutbound(status string, msg *bus.OutboundMessage) {
+	if c.timeline == nil {
+		return
+	}
+	err := c.timeline.AddEvent(&timeline.TimelineEvent{
+		EventID:        fmt.Sprintf("WA_OUT_%d", time.Now().UnixNano()),
+		TraceID:        msg.TraceID,
+		Timestamp:      time.Now(),
+		SenderID:       "AGENT",
+		SenderName:     "Agent",
+		EventType:      "SYSTEM",
+		ContentText:    msg.Content,
+		Classification: fmt.Sprintf("WHATSAPP_OUTBOUND status=%s to=%s", status, msg.ChatID),
+		Authorized:     true,
+	})
+	if err != nil {
+		fmt.Printf("⚠️ Failed to log outbound timeline event: %v\n", err)
+	}
+	fmt.Printf("📤 Outbound WhatsApp status=%s to=%s\n", status, msg.ChatID)
 }
 
 func (c *WhatsAppChannel) eventHandler(evt interface{}) {
@@ -283,6 +335,15 @@ func (c *WhatsAppChannel) eventHandler(evt interface{}) {
 			fmt.Printf("🔍 Unknown message structure, raw: %s\n", content)
 		}
 
+		// Drop WhatsApp system/security noise (raw protobuf-like payloads)
+		if shouldDropSystemNoise(content) {
+			return
+		}
+		// Drop reaction messages if configured
+		if c.config.IgnoreReactions && shouldDropReaction(content) {
+			return
+		}
+
 		fmt.Printf("📩 Message Event from %s (IsFromMe: %v)\n", v.Info.Sender, v.Info.IsFromMe)
 		fmt.Printf("📝 Content: %s\n", content)
 
@@ -296,9 +357,20 @@ func (c *WhatsAppChannel) eventHandler(evt interface{}) {
 
 		sender := v.Info.Sender.User
 		isAuthorized := c.isAllowed(sender)
+		tokenMatched := c.token != "" && strings.Contains(content, c.token)
+		if !isAuthorized && tokenMatched {
+			c.addPending(sender)
+		}
 
 		if !isAuthorized {
 			fmt.Printf("🚫 Unauthorized sender: %s\n", sender)
+			if c.config.DropUnauthorized {
+				// Log but do not respond
+				if tokenMatched {
+					c.logEvent(v.Info.ID, traceIDFromEvent(v.Info.ID), sender, "TEXT", content, mediaPath, "AUTH_TOKEN_SUBMITTED", false)
+				}
+				return
+			}
 			// Continue to process and log, but don't respond or publish to bus
 		}
 
@@ -307,30 +379,72 @@ func (c *WhatsAppChannel) eventHandler(evt interface{}) {
 		}
 
 		// Classify intent (for logging purposes only - no automatic responses)
-		category, _ := c.classifyMessage(context.Background(), content)
+		category := ""
+		if tokenMatched {
+			category = "AUTH_TOKEN_SUBMITTED"
+		} else {
+			category, _ = c.classifyMessage(context.Background(), content)
+		}
 
 		// Log Inbound Event (with authorization status)
-		c.logEvent(v.Info.ID, sender, "TEXT", content, mediaPath, category, isAuthorized)
+		traceID := traceIDFromEvent(v.Info.ID)
+		c.logEvent(v.Info.ID, traceID, sender, "TEXT", content, mediaPath, category, isAuthorized)
 
 		// Publish to bus only if authorized
 		if isAuthorized {
+			msgType := bus.MessageTypeExternal
+			if v.Info.IsFromMe {
+				msgType = bus.MessageTypeInternal
+			}
 			c.Bus.PublishInbound(&bus.InboundMessage{
-				Channel:   c.Name(),
-				SenderID:  sender,
-				ChatID:    v.Info.Chat.String(),
-				Content:   content,
-				Timestamp: v.Info.Timestamp,
+				Channel:        c.Name(),
+				SenderID:       sender,
+				ChatID:         v.Info.Chat.String(),
+				TraceID:        traceID,
+				IdempotencyKey: "wa:" + v.Info.ID,
+				Content:        content,
+				Timestamp:      v.Info.Timestamp,
+				Metadata: map[string]any{
+					bus.MetaKeyMessageType: msgType,
+					bus.MetaKeyIsFromMe:    v.Info.IsFromMe,
+				},
 			})
 		}
 	}
 }
 
-func (c *WhatsAppChannel) logEvent(evtID, sender, evtType, content, media, classification string, authorized bool) {
+func shouldDropSystemNoise(content string) bool {
+	if content == "" {
+		return false
+	}
+	// Blanket filter: raw protobuf-like payloads
+	if strings.Contains(content, "messageContextInfo") &&
+		strings.Contains(content, "{") &&
+		strings.Contains(content, ":") {
+		return true
+	}
+	// Specific known noise markers
+	if strings.Contains(content, "senderKeyDistributionMessage") {
+		return true
+	}
+	return false
+}
+
+func shouldDropReaction(content string) bool {
+	if content == "" {
+		return false
+	}
+	return strings.Contains(content, "reactionMessage:{") ||
+		strings.Contains(content, "reactionMessage:{key:{")
+}
+
+func (c *WhatsAppChannel) logEvent(evtID, traceID, sender, evtType, content, media, classification string, authorized bool) {
 	if c.timeline == nil {
 		return
 	}
 	err := c.timeline.AddEvent(&timeline.TimelineEvent{
 		EventID:        evtID,
+		TraceID:        traceID,
 		Timestamp:      time.Now(), // or v.Info.Timestamp if available
 		SenderID:       sender,
 		SenderName:     "User", // TODO: Lookup contact name
@@ -343,6 +457,17 @@ func (c *WhatsAppChannel) logEvent(evtID, sender, evtType, content, media, class
 	if err != nil {
 		fmt.Printf("⚠️ Failed to log timeline event: %v\n", err)
 	}
+}
+
+func traceIDFromEvent(eventID string) string {
+	if eventID != "" {
+		return "wa-" + eventID
+	}
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err == nil {
+		return hex.EncodeToString(b[:])
+	}
+	return fmt.Sprintf("wa-%d", time.Now().UnixNano())
 }
 
 func shorten(s string, max int) string {
@@ -374,12 +499,107 @@ func isEnglish(text string) bool {
 	return float64(score)/float64(len(words)) > 0.15
 }
 
+// ReloadAuth reloads the allowlist/denylist from the database.
+// Call this after changing whatsapp_allowlist or whatsapp_denylist settings.
+func (c *WhatsAppChannel) ReloadAuth() {
+	c.loadAuthSettings()
+	fmt.Printf("🔄 WhatsApp auth settings reloaded (allowlist: %d, denylist: %d)\n", len(c.allowlist), len(c.denylist))
+}
+
 func (c *WhatsAppChannel) isAllowed(sender string) bool {
-	if len(c.config.AllowFrom) == 0 {
-		return true
+	if c.denylist != nil && c.denylist[sender] {
+		return false
+	}
+	if c.allowlist == nil {
+		c.allowlist = map[string]bool{}
 	}
 	for _, allowed := range c.config.AllowFrom {
 		if allowed == sender {
+			return true
+		}
+	}
+	if len(c.allowlist) == 0 {
+		return false
+	}
+	return c.allowlist[sender]
+}
+
+func (c *WhatsAppChannel) loadAuthSettings() {
+	if c.timeline == nil {
+		return
+	}
+	c.allowlist = make(map[string]bool)
+	c.denylist = make(map[string]bool)
+	if raw, err := c.timeline.GetSetting("whatsapp_allowlist"); err == nil {
+		for _, v := range parseList(raw) {
+			c.allowlist[v] = true
+		}
+	}
+	if raw, err := c.timeline.GetSetting("whatsapp_denylist"); err == nil {
+		for _, v := range parseList(raw) {
+			c.denylist[v] = true
+		}
+	}
+	if raw, err := c.timeline.GetSetting("whatsapp_pair_token"); err == nil {
+		c.token = strings.TrimSpace(raw)
+	}
+}
+
+func (c *WhatsAppChannel) addPending(sender string) {
+	if c.timeline == nil || sender == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	raw, _ := c.timeline.GetSetting("whatsapp_pending")
+	pending := parseList(raw)
+	if containsStr(pending, sender) {
+		return
+	}
+	pending = append(pending, sender)
+	_ = c.timeline.SetSetting("whatsapp_pending", formatList(pending))
+}
+
+func parseList(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var list []string
+	if json.Unmarshal([]byte(raw), &list) == nil {
+		return normalizeList(list)
+	}
+	raw = strings.ReplaceAll(raw, "\r", "\n")
+	raw = strings.ReplaceAll(raw, ",", "\n")
+	parts := strings.Split(raw, "\n")
+	return normalizeList(parts)
+}
+
+func normalizeList(parts []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range parts {
+		v := strings.TrimSpace(p)
+		if v == "" || seen[v] {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	return out
+}
+
+func formatList(list []string) string {
+	data, err := json.Marshal(normalizeList(list))
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func containsStr(list []string, v string) bool {
+	for _, item := range list {
+		if item == v {
 			return true
 		}
 	}

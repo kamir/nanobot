@@ -41,6 +41,12 @@ bug-tracker/
 docs/
 ```
 
+## Releases
+
+- Local release: use `make release` (or `make release-minor` / `make release-patch`) in `gomikrobot/`.
+- GitHub release: push a tag `vX.Y.Z` to trigger the build workflow and attach artifacts.
+- See `docs/release.md` for details.
+
 ## License
 
 MIT

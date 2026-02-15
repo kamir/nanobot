@@ -125,6 +125,8 @@ func runGateway(cmd *cobra.Command, args []string) {
 	// Allow Tier 2 (shell) by default for the personal bot — the shell tool
 	// already has its own deny-pattern and allow-list safety layer.
 	policyEngine.MaxAutoTier = 2
+	// External users (non-owner) are restricted to read-only tools (tier 0).
+	policyEngine.ExternalMaxTier = 0
 
 	// 4c. Setup Memory System (requires Embedder-capable provider)
 	var memorySvc *memory.MemoryService
@@ -137,24 +139,59 @@ func runGateway(cmd *cobra.Command, args []string) {
 	}
 
 	// 4d. Setup Group Collaboration (conditional)
-	var groupMgr *group.Manager
-	if cfg.Group.Enabled && cfg.Group.GroupName != "" {
-		// Check settings for group config
-		if cfg.Group.LFSProxyURL == "" || cfg.Group.LFSProxyURL == "http://localhost:8080" {
+	grpState := &groupState{}
+
+	// Helper: build a group manager from config + settings
+	buildGrpManager := func(grpCfg config.GroupConfig) *group.Manager {
+		if grpCfg.LFSProxyURL == "" || grpCfg.LFSProxyURL == "http://localhost:8080" {
 			if url, err := timeSvc.GetSetting("kafscale_lfs_proxy_url"); err == nil && url != "" {
-				cfg.Group.LFSProxyURL = url
+				grpCfg.LFSProxyURL = url
 			}
 		}
-
 		registry := tools.NewRegistry()
 		ctxBuilder := agent.NewContextBuilder(cfg.Paths.Workspace, workRepoPath, systemRepoPath, registry)
-		agentID := cfg.Group.AgentID
+		agentID := grpCfg.AgentID
 		if agentID == "" {
 			hostname, _ := os.Hostname()
 			agentID = fmt.Sprintf("gomikrobot-%s", hostname)
 		}
 		identity := ctxBuilder.BuildIdentityEnvelope(agentID, "GoMikroBot", cfg.Model.Name)
-		groupMgr = group.NewManager(cfg.Group, timeSvc, identity)
+		return group.NewManager(grpCfg, timeSvc, identity)
+	}
+
+	// Helper: start Kafka consumer + router, returns cancel func
+	startGrpKafka := func(grpCfg config.GroupConfig, mgr *group.Manager, parentCtx context.Context) context.CancelFunc {
+		if grpCfg.KafkaBrokers == "" {
+			return func() {}
+		}
+		kafkaCtx, kafkaCancel := context.WithCancel(parentCtx)
+		topics := mgr.Topics()
+		consumerGroup := grpCfg.ConsumerGroup
+		if consumerGroup == "" {
+			consumerGroup = grpCfg.AgentID
+			if consumerGroup == "" {
+				hostname, _ := os.Hostname()
+				consumerGroup = fmt.Sprintf("gomikrobot-%s", hostname)
+			}
+		}
+		kafkaConsumer := group.NewKafkaConsumer(
+			grpCfg.KafkaBrokers,
+			consumerGroup,
+			[]string{topics.Announce, topics.Requests, topics.Responses, topics.Traces},
+		)
+		router := group.NewGroupRouter(mgr, msgBus, kafkaConsumer)
+		go func() {
+			if err := router.Run(kafkaCtx); err != nil {
+				fmt.Printf("⚠️ Group router stopped: %v\n", err)
+			}
+		}()
+		fmt.Println("📡 Kafka consumer started for group topics")
+		return kafkaCancel
+	}
+
+	if cfg.Group.Enabled && cfg.Group.GroupName != "" {
+		mgr := buildGrpManager(cfg.Group)
+		grpState.SetManager(mgr, nil)
 		fmt.Println("🤝 Group collaboration enabled:", cfg.Group.GroupName)
 	} else {
 		// Check if group was activated via settings
@@ -162,20 +199,8 @@ func runGateway(cmd *cobra.Command, args []string) {
 			if gn, err := timeSvc.GetSetting("group_name"); err == nil && gn != "" {
 				cfg.Group.GroupName = gn
 				cfg.Group.Enabled = true
-				if cfg.Group.LFSProxyURL == "" || cfg.Group.LFSProxyURL == "http://localhost:8080" {
-					if url, err := timeSvc.GetSetting("kafscale_lfs_proxy_url"); err == nil && url != "" {
-						cfg.Group.LFSProxyURL = url
-					}
-				}
-				registry := tools.NewRegistry()
-				ctxBuilder := agent.NewContextBuilder(cfg.Paths.Workspace, workRepoPath, systemRepoPath, registry)
-				agentID := cfg.Group.AgentID
-				if agentID == "" {
-					hostname, _ := os.Hostname()
-					agentID = fmt.Sprintf("gomikrobot-%s", hostname)
-				}
-				identity := ctxBuilder.BuildIdentityEnvelope(agentID, "GoMikroBot", cfg.Model.Name)
-				groupMgr = group.NewManager(cfg.Group, timeSvc, identity)
+				mgr := buildGrpManager(cfg.Group)
+				grpState.SetManager(mgr, nil)
 				fmt.Println("🤝 Group collaboration restored from settings:", cfg.Group.GroupName)
 			}
 		}
@@ -183,8 +208,8 @@ func runGateway(cmd *cobra.Command, args []string) {
 
 	// Build group publisher for the loop (nil-safe)
 	var groupPublisher agent.GroupTracePublisher
-	if groupMgr != nil {
-		groupPublisher = &groupTraceAdapter{mgr: groupMgr}
+	if grpState.Manager() != nil {
+		groupPublisher = &groupTraceAdapter{mgr: grpState.Manager()}
 	}
 
 	// 5. Setup Loop
@@ -543,7 +568,8 @@ func runGateway(cmd *cobra.Command, args []string) {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Content-Type", "application/json")
 
-			if groupMgr == nil {
+			mgr := grpState.Manager()
+			if mgr == nil {
 				json.NewEncoder(w).Encode(map[string]any{
 					"active":       false,
 					"group_name":   "",
@@ -551,7 +577,7 @@ func runGateway(cmd *cobra.Command, args []string) {
 				})
 				return
 			}
-			json.NewEncoder(w).Encode(groupMgr.Status())
+			json.NewEncoder(w).Encode(mgr.Status())
 		})
 
 		// API: Group Members (GET)
@@ -568,6 +594,292 @@ func runGateway(cmd *cobra.Command, args []string) {
 				members = []timeline.GroupMemberRecord{}
 			}
 			json.NewEncoder(w).Encode(members)
+		})
+
+		// API: Group Join (POST)
+		mux.HandleFunc("/api/v1/group/join", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Content-Type", "application/json")
+			if r.Method == "OPTIONS" {
+				return
+			}
+			if r.Method != "POST" {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
+			var body struct {
+				GroupName    string `json:"group_name"`
+				LFSProxyURL string `json:"lfs_proxy_url"`
+				KafkaBrokers string `json:"kafka_brokers"`
+				AgentID      string `json:"agent_id"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, "invalid body", http.StatusBadRequest)
+				return
+			}
+			groupName := strings.TrimSpace(body.GroupName)
+			if groupName == "" {
+				http.Error(w, "group_name required", http.StatusBadRequest)
+				return
+			}
+
+			// Leave existing group if active
+			if mgr := grpState.Manager(); mgr != nil && mgr.Active() {
+				leaveCtx, leaveCancel := context.WithTimeout(ctx, 5*time.Second)
+				_ = mgr.Leave(leaveCtx)
+				leaveCancel()
+				grpState.Clear()
+			}
+
+			// Build new config
+			grpCfg := cfg.Group
+			grpCfg.GroupName = groupName
+			grpCfg.Enabled = true
+			if body.LFSProxyURL != "" {
+				grpCfg.LFSProxyURL = body.LFSProxyURL
+			}
+			if body.KafkaBrokers != "" {
+				grpCfg.KafkaBrokers = body.KafkaBrokers
+			}
+			if body.AgentID != "" {
+				grpCfg.AgentID = body.AgentID
+			}
+
+			mgr := buildGrpManager(grpCfg)
+
+			joinCtx, joinCancel := context.WithTimeout(ctx, 15*time.Second)
+			defer joinCancel()
+			if err := mgr.Join(joinCtx); err != nil {
+				http.Error(w, fmt.Sprintf("join failed: %v", err), http.StatusInternalServerError)
+				return
+			}
+
+			setupGroupBusSubscription(mgr, msgBus)
+			kafkaCancel := startGrpKafka(grpCfg, mgr, ctx)
+			grpState.SetManager(mgr, kafkaCancel)
+
+			// Persist settings
+			_ = timeSvc.SetSetting("group_name", groupName)
+			_ = timeSvc.SetSetting("group_active", "true")
+			if body.LFSProxyURL != "" {
+				_ = timeSvc.SetSetting("kafscale_lfs_proxy_url", body.LFSProxyURL)
+			}
+
+			json.NewEncoder(w).Encode(mgr.Status())
+		})
+
+		// API: Group Leave (POST)
+		mux.HandleFunc("/api/v1/group/leave", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Content-Type", "application/json")
+			if r.Method == "OPTIONS" {
+				return
+			}
+			if r.Method != "POST" {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
+			mgr := grpState.Manager()
+			if mgr == nil {
+				http.Error(w, "not in a group", http.StatusBadRequest)
+				return
+			}
+
+			leaveCtx, leaveCancel := context.WithTimeout(ctx, 10*time.Second)
+			defer leaveCancel()
+			if err := mgr.Leave(leaveCtx); err != nil {
+				http.Error(w, fmt.Sprintf("leave failed: %v", err), http.StatusInternalServerError)
+				return
+			}
+
+			grpState.Clear()
+			_ = timeSvc.SetSetting("group_active", "false")
+
+			json.NewEncoder(w).Encode(map[string]string{"status": "left"})
+		})
+
+		// API: Group Config (GET/POST)
+		mux.HandleFunc("/api/v1/group/config", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Content-Type", "application/json")
+			if r.Method == "OPTIONS" {
+				return
+			}
+
+			if r.Method == "GET" {
+				mgr := grpState.Manager()
+				if mgr == nil {
+					json.NewEncoder(w).Encode(map[string]any{
+						"enabled":       cfg.Group.Enabled,
+						"group_name":    cfg.Group.GroupName,
+						"lfs_proxy_url": cfg.Group.LFSProxyURL,
+						"api_key":       maskSecret(cfg.Group.LFSProxyAPIKey),
+						"kafka_brokers": cfg.Group.KafkaBrokers,
+						"consumer_group": cfg.Group.ConsumerGroup,
+						"agent_id":      cfg.Group.AgentID,
+						"poll_interval_ms": cfg.Group.PollIntervalMs,
+					})
+					return
+				}
+				grpCfg := mgr.Config()
+				json.NewEncoder(w).Encode(map[string]any{
+					"enabled":       grpCfg.Enabled,
+					"group_name":    grpCfg.GroupName,
+					"lfs_proxy_url": grpCfg.LFSProxyURL,
+					"api_key":       maskSecret(grpCfg.LFSProxyAPIKey),
+					"kafka_brokers": grpCfg.KafkaBrokers,
+					"consumer_group": grpCfg.ConsumerGroup,
+					"agent_id":      mgr.AgentID(),
+					"poll_interval_ms": grpCfg.PollIntervalMs,
+				})
+				return
+			}
+
+			if r.Method == "POST" {
+				var body map[string]string
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					http.Error(w, "invalid body", http.StatusBadRequest)
+					return
+				}
+				requiresRejoin := false
+				for key, val := range body {
+					switch key {
+					case "lfs_proxy_url":
+						_ = timeSvc.SetSetting("kafscale_lfs_proxy_url", val)
+						requiresRejoin = true
+					case "api_key":
+						_ = timeSvc.SetSetting("kafscale_lfs_proxy_api_key", val)
+						requiresRejoin = true
+					case "kafka_brokers":
+						_ = timeSvc.SetSetting("kafka_brokers", val)
+						requiresRejoin = true
+					case "consumer_group":
+						_ = timeSvc.SetSetting("kafka_consumer_group", val)
+						requiresRejoin = true
+					case "agent_id":
+						_ = timeSvc.SetSetting("group_agent_id", val)
+						requiresRejoin = true
+					case "poll_interval_ms":
+						_ = timeSvc.SetSetting("group_poll_interval_ms", val)
+					}
+				}
+				json.NewEncoder(w).Encode(map[string]any{
+					"status":         "ok",
+					"requires_rejoin": requiresRejoin,
+				})
+				return
+			}
+
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		})
+
+		// API: Group Tasks Submit (POST)
+		mux.HandleFunc("/api/v1/group/tasks/submit", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Content-Type", "application/json")
+			if r.Method == "OPTIONS" {
+				return
+			}
+			if r.Method != "POST" {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
+			mgr := grpState.Manager()
+			if mgr == nil || !mgr.Active() {
+				http.Error(w, "not in a group", http.StatusBadRequest)
+				return
+			}
+
+			var body struct {
+				Description string `json:"description"`
+				Content     string `json:"content"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, "invalid body", http.StatusBadRequest)
+				return
+			}
+			if strings.TrimSpace(body.Description) == "" {
+				http.Error(w, "description required", http.StatusBadRequest)
+				return
+			}
+
+			taskID := newTraceID()
+			submitCtx, submitCancel := context.WithTimeout(ctx, 10*time.Second)
+			defer submitCancel()
+			if err := mgr.SubmitTask(submitCtx, taskID, body.Description, body.Content); err != nil {
+				http.Error(w, fmt.Sprintf("submit failed: %v", err), http.StatusInternalServerError)
+				return
+			}
+
+			// Persist to local DB
+			_ = timeSvc.InsertGroupTask(&timeline.GroupTaskRecord{
+				TaskID:      taskID,
+				Description: body.Description,
+				Content:     body.Content,
+				Direction:   "outgoing",
+				RequesterID: mgr.AgentID(),
+				Status:      "pending",
+			})
+
+			json.NewEncoder(w).Encode(map[string]string{"status": "submitted", "task_id": taskID})
+		})
+
+		// API: Group Tasks List (GET)
+		mux.HandleFunc("/api/v1/group/tasks", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Content-Type", "application/json")
+
+			direction := r.URL.Query().Get("direction")
+			status := r.URL.Query().Get("status")
+			limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+			if limit == 0 {
+				limit = 50
+			}
+			offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+
+			tasks, err := timeSvc.ListGroupTasks(direction, status, limit, offset)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if tasks == nil {
+				tasks = []timeline.GroupTaskRecord{}
+			}
+			json.NewEncoder(w).Encode(tasks)
+		})
+
+		// API: Group Traces (GET)
+		mux.HandleFunc("/api/v1/group/traces", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Content-Type", "application/json")
+
+			agentID := r.URL.Query().Get("agent_id")
+			limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+			if limit == 0 {
+				limit = 50
+			}
+			offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+
+			traces, err := timeSvc.ListAllGroupTraces(limit, offset, agentID)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if traces == nil {
+				traces = []timeline.GroupTrace{}
+			}
+			json.NewEncoder(w).Encode(traces)
 		})
 
 		// API: Settings (GET/POST)
@@ -595,6 +907,10 @@ func runGateway(cmd *cobra.Command, args []string) {
 					return
 				}
 				fmt.Printf("⚙️ Setting changed: %s = %s\n", body.Key, body.Value)
+				// Auto-reload WhatsApp auth when allowlist/denylist changes
+				if body.Key == "whatsapp_allowlist" || body.Key == "whatsapp_denylist" || body.Key == "whatsapp_pair_token" {
+					wa.ReloadAuth()
+				}
 				json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 				return
 			}
@@ -1291,6 +1607,9 @@ func runGateway(cmd *cobra.Command, args []string) {
 				IdempotencyKey: "web:" + traceID,
 				Content:        body.Message,
 				Timestamp:      time.Now(),
+				Metadata: map[string]any{
+					bus.MetaKeyMessageType: bus.MessageTypeExternal,
+				},
 			})
 
 			json.NewEncoder(w).Encode(map[string]string{"status": "queued"})
@@ -1350,6 +1669,11 @@ func runGateway(cmd *cobra.Command, args []string) {
 			http.ServeFile(w, r, "web/timeline.html")
 		})
 
+		// SPA: Group Management
+		mux.HandleFunc("/group", func(w http.ResponseWriter, r *http.Request) {
+			http.ServeFile(w, r, "web/group.html")
+		})
+
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/" {
 				http.Redirect(w, r, "/timeline", http.StatusFound)
@@ -1378,45 +1702,24 @@ func runGateway(cmd *cobra.Command, args []string) {
 	}()
 
 	// Start Group Collaboration (if configured)
-	if groupMgr != nil {
+	if mgr := grpState.Manager(); mgr != nil {
 		// Subscribe bus for group outbound
-		setupGroupBusSubscription(groupMgr, msgBus)
+		setupGroupBusSubscription(mgr, msgBus)
 
 		// Join group
 		go func() {
 			joinCtx, joinCancel := context.WithTimeout(ctx, 15*time.Second)
 			defer joinCancel()
-			if err := groupMgr.Join(joinCtx); err != nil {
+			if err := mgr.Join(joinCtx); err != nil {
 				fmt.Printf("⚠️ Group join failed: %v\n", err)
 			} else {
-				fmt.Printf("🤝 Joined group: %s\n", groupMgr.GroupName())
+				fmt.Printf("🤝 Joined group: %s\n", mgr.GroupName())
 			}
 		}()
 
 		// Start Kafka consumer if brokers are configured
-		if cfg.Group.KafkaBrokers != "" {
-			topics := groupMgr.Topics()
-			consumerGroup := cfg.Group.ConsumerGroup
-			if consumerGroup == "" {
-				consumerGroup = cfg.Group.AgentID
-				if consumerGroup == "" {
-					hostname, _ := os.Hostname()
-					consumerGroup = fmt.Sprintf("gomikrobot-%s", hostname)
-				}
-			}
-			kafkaConsumer := group.NewKafkaConsumer(
-				cfg.Group.KafkaBrokers,
-				consumerGroup,
-				[]string{topics.Announce, topics.Requests, topics.Responses, topics.Traces},
-			)
-			router := group.NewGroupRouter(groupMgr, msgBus, kafkaConsumer)
-			go func() {
-				if err := router.Run(ctx); err != nil {
-					fmt.Printf("⚠️ Group router stopped: %v\n", err)
-				}
-			}()
-			fmt.Println("📡 Kafka consumer started for group topics")
-		}
+		kafkaCancel := startGrpKafka(cfg.Group, mgr, ctx)
+		grpState.SetManager(mgr, kafkaCancel)
 	}
 
 	fmt.Println("Gateway running. Press Ctrl+C to stop.")
@@ -1424,11 +1727,12 @@ func runGateway(cmd *cobra.Command, args []string) {
 
 	fmt.Println("Shutting down...")
 	// Leave group cleanly
-	if groupMgr != nil && groupMgr.Active() {
+	if mgr := grpState.Manager(); mgr != nil && mgr.Active() {
 		leaveCtx, leaveCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = groupMgr.Leave(leaveCtx)
+		_ = mgr.Leave(leaveCtx)
 		leaveCancel()
 	}
+	grpState.Clear()
 	wa.Stop()
 	loop.Stop()
 	timeSvc.Close()
@@ -1528,6 +1832,36 @@ func isWithin(root, path string) bool {
 	return !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".."
 }
 
+// groupState manages the lifecycle of the group manager at runtime.
+type groupState struct {
+	mu     sync.RWMutex
+	mgr    *group.Manager
+	cancel context.CancelFunc // cancels Kafka consumer goroutine
+}
+
+func (gs *groupState) Manager() *group.Manager {
+	gs.mu.RLock()
+	defer gs.mu.RUnlock()
+	return gs.mgr
+}
+
+func (gs *groupState) SetManager(mgr *group.Manager, cancel context.CancelFunc) {
+	gs.mu.Lock()
+	defer gs.mu.Unlock()
+	gs.mgr = mgr
+	gs.cancel = cancel
+}
+
+func (gs *groupState) Clear() {
+	gs.mu.Lock()
+	defer gs.mu.Unlock()
+	if gs.cancel != nil {
+		gs.cancel()
+	}
+	gs.mgr = nil
+	gs.cancel = nil
+}
+
 // groupTraceAdapter adapts group.Manager to the agent.GroupTracePublisher interface.
 type groupTraceAdapter struct {
 	mgr *group.Manager
@@ -1535,6 +1869,13 @@ type groupTraceAdapter struct {
 
 func (a *groupTraceAdapter) Active() bool {
 	return a.mgr.Active()
+}
+
+func maskSecret(s string) string {
+	if len(s) <= 4 {
+		return strings.Repeat("*", len(s))
+	}
+	return s[:2] + strings.Repeat("*", len(s)-4) + s[len(s)-2:]
 }
 
 func (a *groupTraceAdapter) PublishTrace(ctx context.Context, payload interface{}) error {

@@ -302,12 +302,21 @@ func (b *ContextBuilder) BuildMessages(
 	currentMessage string,
 	channel string,
 	chatID string,
+	messageType string,
 ) []provider.Message {
 
 	systemPrompt := b.BuildSystemPrompt()
 
 	if channel != "" && chatID != "" {
 		systemPrompt += fmt.Sprintf("\n\n## Current Session\nChannel: %s\nChat ID: %s", channel, chatID)
+	}
+
+	// Inject request context based on message type
+	switch messageType {
+	case "internal":
+		systemPrompt += "\n\n## Request Context\nThis is an INTERNAL message from the bot owner. Treat as command/reflection. Full tool access. Respond concisely and directly. You may access system internals."
+	case "external":
+		systemPrompt += "\n\n## Request Context\nThis is an EXTERNAL request from an authorized user. Be helpful and professional. Do NOT expose system internals (paths, configs, keys). Prefer read-only operations. Tool access may be restricted by policy."
 	}
 
 	messages := []provider.Message{

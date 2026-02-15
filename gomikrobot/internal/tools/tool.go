@@ -19,6 +19,32 @@ type Tool interface {
 	Execute(ctx context.Context, params map[string]any) (string, error)
 }
 
+// TieredTool is an optional interface for tools that declare a risk tier.
+// Tier 0: read-only (always allowed)
+// Tier 1: controlled writes (allowed by policy)
+// Tier 2: external/high-impact (requires approval)
+type TieredTool interface {
+	Tool
+	Tier() int
+}
+
+// Risk tier constants.
+const (
+	TierReadOnly  = 0 // Read-only internal tools
+	TierWrite     = 1 // Controlled write/internal effects
+	TierHighRisk  = 2 // External or high-impact actions
+)
+
+// ToolTier returns the risk tier for a tool.
+// If the tool implements TieredTool, its Tier() is returned.
+// Otherwise defaults to TierReadOnly (safe default for unclassified tools).
+func ToolTier(t Tool) int {
+	if tt, ok := t.(TieredTool); ok {
+		return tt.Tier()
+	}
+	return TierReadOnly
+}
+
 // Registry manages tool registration and execution.
 type Registry struct {
 	tools map[string]Tool

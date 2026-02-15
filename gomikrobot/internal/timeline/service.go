@@ -67,6 +67,8 @@ func NewTimelineService(dbPath string) (*TimelineService, error) {
 	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_idempotency ON tasks(idempotency_key)`)
 	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_trace ON tasks(trace_id)`)
 	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_delivery ON tasks(delivery_status, delivery_next_at)`)
+	// Best-effort migration: add message_type column to tasks table.
+	_, _ = db.Exec(`ALTER TABLE tasks ADD COLUMN message_type TEXT DEFAULT ''`)
 	// Best-effort migration: add token columns to tasks table.
 	_, _ = db.Exec(`ALTER TABLE tasks ADD COLUMN prompt_tokens INTEGER NOT NULL DEFAULT 0`)
 	_, _ = db.Exec(`ALTER TABLE tasks ADD COLUMN completion_tokens INTEGER NOT NULL DEFAULT 0`)
@@ -129,6 +131,22 @@ func NewTimelineService(dbPath string) (*TimelineService, error) {
 		status TEXT DEFAULT 'active',
 		last_seen DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`)
+	// Best-effort migration: group_tasks table.
+	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS group_tasks (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		task_id TEXT UNIQUE NOT NULL,
+		description TEXT,
+		content TEXT,
+		direction TEXT NOT NULL DEFAULT 'outgoing',
+		requester_id TEXT NOT NULL,
+		responder_id TEXT,
+		response_content TEXT,
+		status TEXT NOT NULL DEFAULT 'pending',
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		responded_at DATETIME
+	)`)
+	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_group_tasks_direction ON group_tasks(direction)`)
+	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_group_tasks_status ON group_tasks(status)`)
 
 	return &TimelineService{db: db}, nil
 }
@@ -385,8 +403,8 @@ func (s *TimelineService) CreateTask(task *AgentTask) (*AgentTask, error) {
 	}
 
 	query := `
-	INSERT INTO tasks (task_id, idempotency_key, trace_id, channel, chat_id, sender_id, status, content_in, delivery_status)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	INSERT INTO tasks (task_id, idempotency_key, trace_id, channel, chat_id, sender_id, message_type, status, content_in, delivery_status)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	// Pass NULL for empty idempotency_key to avoid UNIQUE constraint on empty strings.
 	var idempKey interface{}
@@ -400,6 +418,7 @@ func (s *TimelineService) CreateTask(task *AgentTask) (*AgentTask, error) {
 		task.Channel,
 		task.ChatID,
 		task.SenderID,
+		task.MessageType,
 		task.Status,
 		task.ContentIn,
 		task.DeliveryStatus,
@@ -415,7 +434,7 @@ func (s *TimelineService) CreateTask(task *AgentTask) (*AgentTask, error) {
 // GetTask returns a task by task_id.
 func (s *TimelineService) GetTask(taskID string) (*AgentTask, error) {
 	query := `SELECT id, task_id, COALESCE(idempotency_key,''), COALESCE(trace_id,''),
-		channel, chat_id, COALESCE(sender_id,''), status,
+		channel, chat_id, COALESCE(sender_id,''), COALESCE(message_type,''), status,
 		COALESCE(content_in,''), COALESCE(content_out,''), COALESCE(error_text,''),
 		prompt_tokens, completion_tokens, total_tokens,
 		delivery_status, delivery_attempts, delivery_next_at,
@@ -426,7 +445,7 @@ func (s *TimelineService) GetTask(taskID string) (*AgentTask, error) {
 	var deliveryNextAt, completedAt sql.NullTime
 	err := s.db.QueryRow(query, taskID).Scan(
 		&t.ID, &t.TaskID, &t.IdempotencyKey, &t.TraceID,
-		&t.Channel, &t.ChatID, &t.SenderID, &t.Status,
+		&t.Channel, &t.ChatID, &t.SenderID, &t.MessageType, &t.Status,
 		&t.ContentIn, &t.ContentOut, &t.ErrorText,
 		&t.PromptTokens, &t.CompletionTokens, &t.TotalTokens,
 		&t.DeliveryStatus, &t.DeliveryAttempts, &deliveryNextAt,
@@ -454,7 +473,7 @@ func (s *TimelineService) GetTaskByIdempotencyKey(key string) (*AgentTask, error
 		return nil, nil
 	}
 	query := `SELECT id, task_id, COALESCE(idempotency_key,''), COALESCE(trace_id,''),
-		channel, chat_id, COALESCE(sender_id,''), status,
+		channel, chat_id, COALESCE(sender_id,''), COALESCE(message_type,''), status,
 		COALESCE(content_in,''), COALESCE(content_out,''), COALESCE(error_text,''),
 		prompt_tokens, completion_tokens, total_tokens,
 		delivery_status, delivery_attempts, delivery_next_at,
@@ -465,7 +484,7 @@ func (s *TimelineService) GetTaskByIdempotencyKey(key string) (*AgentTask, error
 	var deliveryNextAt, completedAt sql.NullTime
 	err := s.db.QueryRow(query, key).Scan(
 		&t.ID, &t.TaskID, &t.IdempotencyKey, &t.TraceID,
-		&t.Channel, &t.ChatID, &t.SenderID, &t.Status,
+		&t.Channel, &t.ChatID, &t.SenderID, &t.MessageType, &t.Status,
 		&t.ContentIn, &t.ContentOut, &t.ErrorText,
 		&t.PromptTokens, &t.CompletionTokens, &t.TotalTokens,
 		&t.DeliveryStatus, &t.DeliveryAttempts, &deliveryNextAt,
@@ -514,7 +533,7 @@ func (s *TimelineService) ListPendingDeliveries(limit int) ([]AgentTask, error) 
 		limit = 10
 	}
 	query := `SELECT id, task_id, COALESCE(idempotency_key,''), COALESCE(trace_id,''),
-		channel, chat_id, COALESCE(sender_id,''), status,
+		channel, chat_id, COALESCE(sender_id,''), COALESCE(message_type,''), status,
 		COALESCE(content_in,''), COALESCE(content_out,''), COALESCE(error_text,''),
 		prompt_tokens, completion_tokens, total_tokens,
 		delivery_status, delivery_attempts, delivery_next_at,
@@ -539,7 +558,7 @@ func (s *TimelineService) ListTasks(status, channel string, limit, offset int) (
 		limit = 50
 	}
 	query := `SELECT id, task_id, COALESCE(idempotency_key,''), COALESCE(trace_id,''),
-		channel, chat_id, COALESCE(sender_id,''), status,
+		channel, chat_id, COALESCE(sender_id,''), COALESCE(message_type,''), status,
 		COALESCE(content_in,''), COALESCE(content_out,''), COALESCE(error_text,''),
 		prompt_tokens, completion_tokens, total_tokens,
 		delivery_status, delivery_attempts, delivery_next_at,
@@ -573,7 +592,7 @@ func scanTasks(rows *sql.Rows) ([]AgentTask, error) {
 		var deliveryNextAt, completedAt sql.NullTime
 		err := rows.Scan(
 			&t.ID, &t.TaskID, &t.IdempotencyKey, &t.TraceID,
-			&t.Channel, &t.ChatID, &t.SenderID, &t.Status,
+			&t.Channel, &t.ChatID, &t.SenderID, &t.MessageType, &t.Status,
 			&t.ContentIn, &t.ContentOut, &t.ErrorText,
 			&t.PromptTokens, &t.CompletionTokens, &t.TotalTokens,
 			&t.DeliveryStatus, &t.DeliveryAttempts, &deliveryNextAt,
@@ -896,4 +915,116 @@ func (s *TimelineService) MarkStaleMembers(cutoff time.Time) (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+// --- Group Tasks ---
+
+// InsertGroupTask inserts a new group collaboration task.
+func (s *TimelineService) InsertGroupTask(task *GroupTaskRecord) error {
+	_, err := s.db.Exec(`INSERT INTO group_tasks
+		(task_id, description, content, direction, requester_id, responder_id, response_content, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		task.TaskID, task.Description, task.Content, task.Direction,
+		task.RequesterID, task.ResponderID, task.ResponseContent, task.Status)
+	return err
+}
+
+// UpdateGroupTaskResponse updates a group task with response data.
+func (s *TimelineService) UpdateGroupTaskResponse(taskID, responderID, content, status string) error {
+	_, err := s.db.Exec(`UPDATE group_tasks SET
+		responder_id = ?, response_content = ?, status = ?, responded_at = datetime('now')
+		WHERE task_id = ?`,
+		responderID, content, status, taskID)
+	return err
+}
+
+// ListGroupTasks returns group tasks filtered by direction and status.
+func (s *TimelineService) ListGroupTasks(direction, status string, limit, offset int) ([]GroupTaskRecord, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	query := `SELECT id, task_id, COALESCE(description,''), COALESCE(content,''),
+		direction, requester_id, COALESCE(responder_id,''),
+		COALESCE(response_content,''), status, created_at, responded_at
+		FROM group_tasks WHERE 1=1`
+	args := []interface{}{}
+
+	if direction != "" {
+		query += " AND direction = ?"
+		args = append(args, direction)
+	}
+	if status != "" {
+		query += " AND status = ?"
+		args = append(args, status)
+	}
+	query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+	args = append(args, limit, offset)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []GroupTaskRecord
+	for rows.Next() {
+		var t GroupTaskRecord
+		var respondedAt sql.NullTime
+		if err := rows.Scan(&t.ID, &t.TaskID, &t.Description, &t.Content,
+			&t.Direction, &t.RequesterID, &t.ResponderID,
+			&t.ResponseContent, &t.Status, &t.CreatedAt, &respondedAt); err != nil {
+			return nil, err
+		}
+		if respondedAt.Valid {
+			t.RespondedAt = &respondedAt.Time
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// ListAllGroupTraces returns paginated group traces with optional agent filter.
+func (s *TimelineService) ListAllGroupTraces(limit, offset int, agentFilter string) ([]GroupTrace, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	query := `SELECT id, trace_id, source_agent_id,
+		COALESCE(span_id,''), COALESCE(parent_span_id,''), COALESCE(span_type,''),
+		COALESCE(title,''), COALESCE(content,''), started_at, ended_at,
+		COALESCE(duration_ms,0), created_at
+		FROM group_traces WHERE 1=1`
+	args := []interface{}{}
+
+	if agentFilter != "" {
+		query += " AND source_agent_id = ?"
+		args = append(args, agentFilter)
+	}
+	query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+	args = append(args, limit, offset)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []GroupTrace
+	for rows.Next() {
+		var gt GroupTrace
+		var startedAt, endedAt sql.NullTime
+		if err := rows.Scan(&gt.ID, &gt.TraceID, &gt.SourceAgentID,
+			&gt.SpanID, &gt.ParentSpanID, &gt.SpanType,
+			&gt.Title, &gt.Content, &startedAt, &endedAt,
+			&gt.DurationMs, &gt.CreatedAt); err != nil {
+			return nil, err
+		}
+		if startedAt.Valid {
+			gt.StartedAt = &startedAt.Time
+		}
+		if endedAt.Valid {
+			gt.EndedAt = &endedAt.Time
+		}
+		out = append(out, gt)
+	}
+	return out, rows.Err()
 }

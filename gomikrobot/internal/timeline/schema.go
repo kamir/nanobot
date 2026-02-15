@@ -47,6 +47,7 @@ type AgentTask struct {
 	Channel          string     `json:"channel"`
 	ChatID           string     `json:"chat_id"`
 	SenderID         string     `json:"sender_id,omitempty"`
+	MessageType      string     `json:"message_type,omitempty"`
 	Status           string     `json:"status"`
 	ContentIn        string     `json:"content_in,omitempty"`
 	ContentOut       string     `json:"content_out,omitempty"`
@@ -128,6 +129,21 @@ type GroupMemberRecord struct {
 	Model        string    `json:"model"`
 	Status       string    `json:"status"`
 	LastSeen     time.Time `json:"last_seen"`
+}
+
+// GroupTaskRecord represents a group collaboration task.
+type GroupTaskRecord struct {
+	ID              int64      `json:"id"`
+	TaskID          string     `json:"task_id"`
+	Description     string     `json:"description"`
+	Content         string     `json:"content"`
+	Direction       string     `json:"direction"` // "outgoing" | "incoming"
+	RequesterID     string     `json:"requester_id"`
+	ResponderID     string     `json:"responder_id"`
+	ResponseContent string     `json:"response_content"`
+	Status          string     `json:"status"` // pending/completed/failed/rejected
+	CreatedAt       time.Time  `json:"created_at"`
+	RespondedAt     *time.Time `json:"responded_at,omitempty"`
 }
 
 // PolicyDecisionRecord represents a logged policy evaluation.
@@ -269,4 +285,20 @@ CREATE TABLE IF NOT EXISTS group_members (
 	status TEXT DEFAULT 'active',
 	last_seen DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS group_tasks (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	task_id TEXT UNIQUE NOT NULL,
+	description TEXT,
+	content TEXT,
+	direction TEXT NOT NULL DEFAULT 'outgoing',
+	requester_id TEXT NOT NULL,
+	responder_id TEXT,
+	response_content TEXT,
+	status TEXT NOT NULL DEFAULT 'pending',
+	created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	responded_at DATETIME
+);
+CREATE INDEX IF NOT EXISTS idx_group_tasks_direction ON group_tasks(direction);
+CREATE INDEX IF NOT EXISTS idx_group_tasks_status ON group_tasks(status);
 `

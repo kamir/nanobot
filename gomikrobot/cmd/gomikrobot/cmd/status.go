@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/fatih/color"
+	"github.com/kamir/gomikrobot/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -13,7 +13,8 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version information",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("gomikrobot version %s\n", version)
+		printHeader("🏷️ GoMikroBot Version")
+		fmt.Printf("Version: %s\n", version)
 	},
 }
 
@@ -21,9 +22,7 @@ var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show system status",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println(color.CyanString(logo))
-		fmt.Println("📊 GoMikroBot Status")
-		fmt.Println("─────────────────────")
+		printHeader("📊 GoMikroBot Status")
 		fmt.Printf("Version: %s\n", version)
 
 		// Check config
@@ -33,6 +32,34 @@ var statusCmd = &cobra.Command{
 			fmt.Println("Config:  ✓ Found (" + configPath + ")")
 		} else {
 			fmt.Println("Config:  ✗ Not found (run 'gomikrobot onboard' first)")
+		}
+
+		// Check API key presence
+		var cfg *config.Config
+		if c, err := config.Load(); err == nil {
+			cfg = c
+			if cfg.Providers.OpenAI.APIKey != "" {
+				fmt.Println("API Key: ✓ Found")
+			} else {
+				fmt.Println("API Key: ✗ Not found")
+			}
+		} else {
+			fmt.Println("API Key: ? Unable to load config")
+		}
+
+		// WhatsApp status + QR location
+		if cfg != nil && cfg.Channels.WhatsApp.Enabled {
+			fmt.Println("WhatsApp: ✓ Enabled")
+		} else if cfg != nil {
+			fmt.Println("WhatsApp: ✗ Disabled")
+		}
+		waDB := filepath.Join(home, ".gomikrobot", "whatsapp.db")
+		qrPath := filepath.Join(home, ".gomikrobot", "whatsapp-qr.png")
+		if _, err := os.Stat(waDB); err == nil {
+			fmt.Println("WhatsApp Link: ✓ Session found (no QR needed)")
+		} else {
+			fmt.Println("WhatsApp Link: ✗ No session (QR needed)")
+			fmt.Println("WhatsApp QR:   " + qrPath)
 		}
 
 		fmt.Println("Status:  Ready")

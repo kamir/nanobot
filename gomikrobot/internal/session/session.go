@@ -77,6 +77,39 @@ func (s *Session) Clear() {
 	s.UpdatedAt = time.Now()
 }
 
+// GetMetadata returns a metadata value by key.
+func (s *Session) GetMetadata(key string) (any, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.Metadata == nil {
+		return nil, false
+	}
+	val, ok := s.Metadata[key]
+	return val, ok
+}
+
+// SetMetadata sets a metadata value by key.
+func (s *Session) SetMetadata(key string, value any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Metadata == nil {
+		s.Metadata = map[string]any{}
+	}
+	s.Metadata[key] = value
+	s.UpdatedAt = time.Now()
+}
+
+// DeleteMetadata deletes a metadata key.
+func (s *Session) DeleteMetadata(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Metadata == nil {
+		return
+	}
+	delete(s.Metadata, key)
+	s.UpdatedAt = time.Now()
+}
+
 // Manager manages session persistence.
 type Manager struct {
 	sessionsDir string

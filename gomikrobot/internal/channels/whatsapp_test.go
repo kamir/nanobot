@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -29,6 +30,9 @@ func newTestTimeline(t *testing.T) *timeline.TimelineService {
 
 func TestWhatsAppSilentModeSuppressesOutbound(t *testing.T) {
 	timeSvc := newTestTimeline(t)
+	if err := timeSvc.SetSetting("silent_mode", "true"); err != nil {
+		t.Fatalf("failed to set silent mode: %v", err)
+	}
 	msgBus := bus.NewMessageBus()
 
 	cfg := config.WhatsAppConfig{Enabled: true}
@@ -75,5 +79,43 @@ func TestWhatsAppSilentModeDisabledAllowsOutbound(t *testing.T) {
 
 	if atomic.LoadInt32(&called) != 1 {
 		t.Fatalf("expected send to occur when silent mode is disabled")
+	}
+}
+
+func TestWhatsAppOutboundLogsTimeline(t *testing.T) {
+	timeSvc := newTestTimeline(t)
+	if err := timeSvc.SetSetting("silent_mode", "true"); err != nil {
+		t.Fatalf("failed to set silent mode: %v", err)
+	}
+	msgBus := bus.NewMessageBus()
+
+	cfg := config.WhatsAppConfig{Enabled: true}
+	wa := NewWhatsAppChannel(cfg, msgBus, nil, timeSvc)
+	wa.sendFn = func(ctx context.Context, msg *bus.OutboundMessage) error {
+		return nil
+	}
+
+	wa.handleOutbound(&bus.OutboundMessage{
+		Channel: wa.Name(),
+		ChatID:  "12345@s.whatsapp.net",
+		Content: "test outbound",
+	})
+
+	events, err := timeSvc.GetEvents(timeline.FilterArgs{Limit: 10})
+	if err != nil {
+		t.Fatalf("failed to get events: %v", err)
+	}
+	found := false
+	for _, e := range events {
+		if strings.Contains(e.Classification, "WHATSAPP_OUTBOUND") {
+			found = true
+			if !strings.Contains(e.Classification, "status=suppressed") {
+				t.Fatalf("expected suppressed status, got %s", e.Classification)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected outbound timeline event to be logged")
 	}
 }

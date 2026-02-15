@@ -23,11 +23,12 @@ All reasoning originates from:
 
 Derived artifacts are created in:
 
-- /requirements – WHAT must be preserved or changed
-- /arch         – HOW the Go system will be structured
-- /tasks        – Concrete migration steps
-- /bug-tracker  – Investigations and migration problems
-- /docs         – Explanations for developers
+- /requirements  – WHAT must be preserved or changed (new FR-xyz files, running number)
+- /arch          – HOW the Go system will be structured
+- /DEVTASKS      – Plans and solution designs
+- /bug-tracker   – Investigations and migration problems
+- /docs          – Feature docs for the bot
+- /morphing/docs - bot-structure-and-dynamics.md
 
 Direction of truth is one-way:
 
@@ -35,6 +36,17 @@ Direction of truth is one-way:
                   ↘ Problem Investigations ↗
 
 No agent may modify PH files.
+
+Documentation rule:
+- Any change to CLI commands, flags, or arguments must be documented in `/docs` immediately.
+
+Release hygiene checklist:
+- Docs updated for any CLI changes.
+- Specs updated for any behavior changes.
+- Tests added/updated for new or changed flows.
+- `docs/USER_MANUAL.md` reviewed for user-facing changes.
+- `docs/OPERATIONS_GUIDE.md` reviewed for API/port/DB changes.
+- `docs/ADMIN_GUIDE.md` reviewed for config/security/policy changes.
 
 ---
 
@@ -70,7 +82,7 @@ Preserves original intent of the Python system and all design discussions.
 - Which contracts are implicit?
 
 **Output**
-- /requirements/*.md
+- /requirements/FR-xyz-*.md
 
 ---
 
@@ -126,7 +138,7 @@ Preserves original intent of the Python system and all design discussions.
   - rollback path
 
 **Output**
-- /tasks/migration-YYYY-MM-DD.md
+- /DEVTASKS/*.md
 
 ---
 
@@ -143,6 +155,7 @@ Used when:
 **Produces**
 
     ./bug-tracker/BUG-<id>.json
+    /morphing/docs/bot-structure-and-dynamics.md - Update the   chart of structure and the flow
 
 including:
 
@@ -228,6 +241,9 @@ The Go rewrite is accepted when:
 ### /docs
 - onboarding for Go devs
 - rationale
+- `USER_MANUAL.md` — End-user guide (CLI, WhatsApp, Web UI, memory, Day2Day)
+- `OPERATIONS_GUIDE.md` — DevOps guide (build, deploy, DB, API, observability)
+- `ADMIN_GUIDE.md` — Admin guide (config, security, providers, quotas, extending)
 
 ---
 
@@ -266,7 +282,49 @@ The agents succeed when:
 AGENTS spec: 2.0 – Go Migration Edition
 
 
-⸻
+---
+
+## 11. Documentation Synchronization Protocol
+
+The three published guides in `/docs` must stay in sync with the codebase.
+Every code change that affects user-visible behavior triggers a doc update.
+
+### Trigger Matrix
+
+| Change Type | USER_MANUAL | OPERATIONS_GUIDE | ADMIN_GUIDE |
+|---|---|---|---|
+| New/changed CLI command or flag | Yes | — | — |
+| New/changed API endpoint | — | Yes | — |
+| New/changed config key or env var | — | — | Yes |
+| New/changed tool | Yes (usage) | — | Yes (extending) |
+| Database schema change | — | Yes | — |
+| Security/policy change | — | — | Yes |
+| Build/release/CI change | — | Yes | — |
+| WhatsApp flow change | Yes | — | Yes |
+| Memory/RAG change | Yes (usage) | — | Yes (admin) |
+| Port/network change | — | Yes | — |
+| Day2Day command change | Yes | — | — |
+| Soul file/workspace change | Yes | — | Yes |
+| Web dashboard feature | Yes | Yes (API) | — |
+| Token quota change | — | — | Yes |
+
+### Rules
+
+1. **Same-PR rule** — Doc updates ship in the same PR as the code change.
+   No code PR is complete if it leaves a guide stale.
+2. **Cross-check on release** — Before tagging a release, verify all three
+   guides against the current source. Use the release hygiene checklist
+   in Section 2.
+3. **Single source of truth** — The Go source code is authoritative.
+   If a guide contradicts the code, the guide is wrong. Fix the guide.
+4. **No speculative docs** — Only document what is implemented and merged.
+   Do not document planned features.
+5. **Audience separation** — Keep user-facing details in USER_MANUAL,
+   operator details in OPERATIONS_GUIDE, and admin/security details
+   in ADMIN_GUIDE. Avoid duplicating content across guides; cross-reference
+   instead.
+
+---
 
 How This Helps You Day-to-Day
 

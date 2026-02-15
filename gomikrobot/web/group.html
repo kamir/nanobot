@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Group Management - GoMikroBot</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%23f59e0b'/%3E%3Cstop offset='100%25' stop-color='%23d97706'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x='4' y='14' width='56' height='40' rx='10' fill='url(%23g)'/%3E%3Crect x='12' y='6' width='6' height='12' rx='3' fill='%23f59e0b'/%3E%3Crect x='46' y='6' width='6' height='12' rx='3' fill='%23d97706'/%3E%3Ccircle cx='22' cy='30' r='6' fill='%230d1117'/%3E%3Ccircle cx='22' cy='30' r='3' fill='%23f59e0b'/%3E%3Ccircle cx='42' cy='30' r='6' fill='%230d1117'/%3E%3Ccircle cx='42' cy='30' r='3' fill='%23d97706'/%3E%3Crect x='20' y='40' width='24' height='4' rx='2' fill='%230d1117'/%3E%3C/svg%3E">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+        body {
+            font-family: 'JetBrains Mono', monospace;
+            background-color: #0d1117;
+            color: #c9d1d9;
+        }
+
+        .glass {
+            background: rgba(22, 27, 34, 0.8);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(48, 54, 61, 0.5);
+        }
+
+        .glass-card {
+            background: rgba(22, 27, 34, 0.6);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(48, 54, 61, 0.4);
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .glass-card:hover {
+            border-color: rgba(245, 158, 11, 0.4);
+            box-shadow: 0 0 20px rgba(245, 158, 11, 0.05);
+        }
+
+        .self-card {
+            border-color: rgba(245, 158, 11, 0.5) !important;
+            box-shadow: 0 0 24px rgba(245, 158, 11, 0.08), inset 0 0 30px rgba(245, 158, 11, 0.03);
+        }
+
+        .tab-active {
+            color: #f59e0b;
+            border-bottom: 2px solid #f59e0b;
+        }
+
+        .tab-inactive {
+            color: #6b7280;
+            border-bottom: 2px solid transparent;
+        }
+
+        .tab-inactive:hover {
+            color: #9ca3af;
+            border-bottom-color: rgba(245, 158, 11, 0.3);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        .status-active { background: #22c55e; box-shadow: 0 0 8px rgba(34, 197, 94, 0.5); }
+        .status-stale { background: #eab308; box-shadow: 0 0 8px rgba(234, 179, 8, 0.3); }
+        .status-inactive { background: #6b7280; }
+
+        .badge {
+            font-size: 10px;
+            padding: 1px 8px;
+            border-radius: 9999px;
+            font-weight: 600;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+        }
+
+        .badge-active { background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.3); }
+        .badge-stale { background: rgba(234, 179, 8, 0.15); color: #facc15; border: 1px solid rgba(234, 179, 8, 0.3); }
+        .badge-pending { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); }
+        .badge-completed { background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.3); }
+        .badge-failed { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
+        .badge-rejected { background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); }
+        .badge-outgoing { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+        .badge-incoming { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); }
+
+        .pill {
+            font-size: 9px;
+            padding: 1px 6px;
+            border-radius: 4px;
+            background: rgba(245, 158, 11, 0.1);
+            color: #fbbf24;
+            border: 1px solid rgba(245, 158, 11, 0.2);
+        }
+
+        .span-INBOUND { color: #58a6ff; }
+        .span-LLM { color: #a855f7; }
+        .span-TOOL { color: #fb923c; }
+        .span-OUTBOUND { color: #22c55e; }
+        .span-POLICY { color: #ef4444; }
+        .span-EVENT { color: #6366f1; }
+
+        .input-field {
+            background: rgba(13, 17, 23, 0.8);
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            padding: 6px 10px;
+            border-radius: 6px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .input-field:focus {
+            border-color: #f59e0b;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            color: #0d1117;
+            font-weight: 600;
+            font-size: 11px;
+            padding: 6px 16px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            transition: opacity 0.2s, transform 0.1s;
+            letter-spacing: 0.05em;
+        }
+
+        .btn-primary:hover { opacity: 0.9; }
+        .btn-primary:active { transform: scale(0.98); }
+        .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        .btn-danger {
+            background: rgba(239, 68, 68, 0.15);
+            color: #f87171;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            font-weight: 600;
+            font-size: 11px;
+            padding: 6px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .btn-danger:hover { background: rgba(239, 68, 68, 0.25); }
+
+        .btn-ghost {
+            background: transparent;
+            color: #9ca3af;
+            border: 1px solid #30363d;
+            font-size: 11px;
+            padding: 5px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-ghost:hover { color: #f59e0b; border-color: rgba(245, 158, 11, 0.4); }
+        .btn-ghost.active { color: #f59e0b; border-color: #f59e0b; background: rgba(245, 158, 11, 0.08); }
+
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #f59e0b; }
+
+        [v-cloak] { display: none !important; }
+
+        .fade-enter-active, .fade-leave-active { transition: opacity 0.15s; }
+        .fade-enter-from, .fade-leave-to { opacity: 0; }
+
+        @keyframes pulse-ring {
+            0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4); }
+            70% { box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+        }
+        .pulse-ring { animation: pulse-ring 2s infinite; }
+    </style>
+</head>
+
+<body class="h-screen flex flex-col overflow-hidden">
+    <div id="app" v-cloak class="flex flex-col h-full">
+
+        <!-- Header -->
+        <header class="glass z-10 shadow-lg border-b border-gray-800/50">
+            <div class="px-6 py-3 flex items-center justify-between">
+                <div class="flex items-center gap-4">
+                    <a href="/timeline" class="flex items-center gap-2 text-gray-400 hover:text-amber-400 transition-colors text-xs">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+                        </svg>
+                        Timeline
+                    </a>
+                    <div class="w-px h-5 bg-gray-700"></div>
+                    <div class="flex items-center gap-3">
+                        <div class="status-dot" :class="groupActive ? 'status-active pulse-ring' : 'status-inactive'"></div>
+                        <h1 class="text-lg font-bold text-white tracking-widest">GROUP <span class="text-amber-400">MGMT</span></h1>
+                    </div>
+                    <span v-if="status.group_name" class="text-xs text-gray-500 ml-1">{{ status.group_name }}</span>
+                </div>
+                <div class="flex items-center gap-3">
+                    <span class="text-[10px] text-gray-500 tracking-wider">{{ status.agent_id || 'no agent' }}</span>
+                    <button v-if="!groupActive" @click="showJoinModal = true" class="btn-primary">JOIN GROUP</button>
+                    <button v-else @click="leaveGroup" :disabled="leaving" class="btn-danger text-xs">
+                        {{ leaving ? 'LEAVING...' : 'LEAVE GROUP' }}
+                    </button>
+                </div>
+            </div>
+
+            <!-- Tabs -->
+            <div class="px-6 flex gap-0 border-t border-gray-800/30">
+                <button v-for="tab in tabs" :key="tab.id"
+                    @click="activeTab = tab.id"
+                    class="px-4 py-2.5 text-xs font-semibold tracking-wider transition-all"
+                    :class="activeTab === tab.id ? 'tab-active' : 'tab-inactive'">
+                    {{ tab.label }}
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="flex-1 overflow-y-auto p-6">
+
+            <!-- Overview Tab -->
+            <div v-if="activeTab === 'overview'" class="max-w-5xl mx-auto space-y-6">
+                <!-- Status Cards -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div class="glass-card rounded-lg p-4">
+                        <div class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Group</div>
+                        <div class="text-lg font-bold text-white">{{ status.group_name || '---' }}</div>
+                    </div>
+                    <div class="glass-card rounded-lg p-4">
+                        <div class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Status</div>
+                        <div class="flex items-center gap-2">
+                            <div class="status-dot" :class="groupActive ? 'status-active' : 'status-inactive'"></div>
+                            <span class="text-lg font-bold" :class="groupActive ? 'text-green-400' : 'text-gray-500'">
+                                {{ groupActive ? 'Active' : 'Inactive' }}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="glass-card rounded-lg p-4">
+                        <div class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Members</div>
+                        <div class="text-lg font-bold text-amber-400">{{ status.member_count || 0 }}</div>
+                    </div>
+                    <div class="glass-card rounded-lg p-4">
+                        <div class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Agent ID</div>
+                        <div class="text-sm font-medium text-gray-300 truncate">{{ status.agent_id || '---' }}</div>
+                    </div>
+                </div>
+
+                <!-- Health Indicators -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="glass-card rounded-lg p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <span class="text-xs text-gray-400 uppercase tracking-wider font-semibold">LFS Proxy</span>
+                            <div class="flex items-center gap-2">
+                                <div class="status-dot" :class="status.lfs_healthy ? 'status-active' : 'status-inactive'"></div>
+                                <span class="text-xs" :class="status.lfs_healthy ? 'text-green-400' : 'text-red-400'">
+                                    {{ status.lfs_healthy ? 'Reachable' : 'Down' }}
+                                </span>
+                            </div>
+                        </div>
+                        <div class="text-[11px] text-gray-500 truncate">{{ status.lfs_proxy_url || 'not configured' }}</div>
+                    </div>
+                    <div class="glass-card rounded-lg p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <span class="text-xs text-gray-400 uppercase tracking-wider font-semibold">Kafka</span>
+                            <div class="flex items-center gap-2">
+                                <div class="status-dot" :class="groupActive ? 'status-active' : 'status-inactive'"></div>
+                                <span class="text-xs" :class="groupActive ? 'text-green-400' : 'text-gray-500'">
+                                    {{ groupActive ? 'Connected' : 'Disconnected' }}
+                                </span>
+                            </div>
+                        </div>
+                        <div class="text-[11px] text-gray-500">{{ config.kafka_brokers || 'not configured' }}</div>
+                    </div>
+                </div>
+
+                <!-- Quick Join -->
+                <div v-if="!groupActive" class="glass-card rounded-lg p-6">
+                    <div class="text-xs text-gray-400 uppercase tracking-wider font-semibold mb-4">Quick Join</div>
+                    <div class="flex gap-3">
+                        <input v-model="quickJoinName" class="input-field flex-1" placeholder="Group name..." @keyup.enter="quickJoin">
+                        <button @click="quickJoin" :disabled="!quickJoinName.trim() || joining" class="btn-primary">
+                            {{ joining ? 'JOINING...' : 'JOIN' }}
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Decentralized Notice -->
+                <div class="glass-card rounded-lg p-4 border-amber-900/30">
+                    <div class="flex items-start gap-3">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-amber-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        <div>
+                            <div class="text-xs text-amber-400 font-semibold mb-1">Decentralized View</div>
+                            <div class="text-[11px] text-gray-500 leading-relaxed">
+                                This is your agent's local view of the group. Each agent maintains its own roster
+                                based on Kafka announcements and heartbeats. Member status is eventually consistent.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Members Tab -->
+            <div v-if="activeTab === 'members'" class="max-w-5xl mx-auto">
+                <div v-if="members.length === 0" class="text-center py-20">
+                    <div class="text-gray-600 text-sm">No members in group</div>
+                    <div class="text-gray-700 text-xs mt-2">Join a group to see members</div>
+                </div>
+                <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div v-for="member in members" :key="member.agent_id"
+                        class="glass-card rounded-lg p-4"
+                        :class="{ 'self-card': member.agent_id === status.agent_id }">
+                        <!-- Header -->
+                        <div class="flex items-start justify-between mb-3">
+                            <div class="flex-1 min-w-0">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-sm font-bold text-white truncate">{{ member.agent_name || member.agent_id }}</span>
+                                    <span v-if="member.agent_id === status.agent_id" class="text-[9px] px-1.5 py-0.5 rounded bg-amber-900/30 text-amber-400 border border-amber-800/40">YOU</span>
+                                </div>
+                                <div class="text-[10px] text-gray-600 mt-0.5 truncate">{{ member.agent_id }}</div>
+                            </div>
+                            <span class="badge" :class="member.status === 'active' ? 'badge-active' : 'badge-stale'">
+                                {{ member.status }}
+                            </span>
+                        </div>
+
+                        <!-- Model -->
+                        <div class="text-[10px] text-gray-500 mb-2">
+                            Model: <span class="text-gray-300">{{ member.model || '---' }}</span>
+                        </div>
+
+                        <!-- Capabilities -->
+                        <div v-if="parseCaps(member.capabilities).length" class="flex flex-wrap gap-1 mb-2">
+                            <span v-for="cap in parseCaps(member.capabilities).slice(0, 6)" :key="cap" class="pill">{{ cap }}</span>
+                            <span v-if="parseCaps(member.capabilities).length > 6" class="pill">+{{ parseCaps(member.capabilities).length - 6 }}</span>
+                        </div>
+
+                        <!-- Channels -->
+                        <div v-if="parseChannels(member.channels).length" class="text-[10px] text-gray-500 mb-2">
+                            Channels: <span class="text-gray-400">{{ parseChannels(member.channels).join(', ') }}</span>
+                        </div>
+
+                        <!-- Soul Summary -->
+                        <div v-if="member.soul_summary" class="text-[10px] text-gray-500 mt-2 line-clamp-2 leading-relaxed">
+                            {{ member.soul_summary }}
+                        </div>
+
+                        <!-- Last Seen -->
+                        <div class="text-[9px] text-gray-600 mt-3 flex items-center gap-1">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                            </svg>
+                            {{ relativeTime(member.last_seen) }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tasks Tab -->
+            <div v-if="activeTab === 'tasks'" class="max-w-5xl mx-auto space-y-4">
+                <!-- Submit Task -->
+                <div v-if="groupActive" class="glass-card rounded-lg p-4">
+                    <div class="text-xs text-gray-400 uppercase tracking-wider font-semibold mb-3">Submit Task to Group</div>
+                    <div class="space-y-2">
+                        <input v-model="taskDescription" class="input-field w-full" placeholder="Task description...">
+                        <textarea v-model="taskContent" class="input-field w-full" rows="3" placeholder="Task content (optional)..."></textarea>
+                        <div class="flex justify-end">
+                            <button @click="submitTask" :disabled="!taskDescription.trim() || submittingTask" class="btn-primary">
+                                {{ submittingTask ? 'SUBMITTING...' : 'SUBMIT TASK' }}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Filters -->
+                <div class="flex items-center gap-2">
+                    <button @click="taskFilter = ''" class="btn-ghost text-[10px]" :class="{ active: taskFilter === '' }">All</button>
+                    <button @click="taskFilter = 'outgoing'" class="btn-ghost text-[10px]" :class="{ active: taskFilter === 'outgoing' }">Outgoing</button>
+                    <button @click="taskFilter = 'incoming'" class="btn-ghost text-[10px]" :class="{ active: taskFilter === 'incoming' }">Incoming</button>
+                    <div class="w-px h-4 bg-gray-700 mx-1"></div>
+                    <button @click="taskStatusFilter = ''" class="btn-ghost text-[10px]" :class="{ active: taskStatusFilter === '' }">All Status</button>
+                    <button @click="taskStatusFilter = 'pending'" class="btn-ghost text-[10px]" :class="{ active: taskStatusFilter === 'pending' }">Pending</button>
+                    <button @click="taskStatusFilter = 'completed'" class="btn-ghost text-[10px]" :class="{ active: taskStatusFilter === 'completed' }">Completed</button>
+                    <button @click="taskStatusFilter = 'failed'" class="btn-ghost text-[10px]" :class="{ active: taskStatusFilter === 'failed' }">Failed</button>
+                </div>
+
+                <!-- Task List -->
+                <div v-if="tasks.length === 0" class="text-center py-16">
+                    <div class="text-gray-600 text-sm">No tasks found</div>
+                </div>
+                <div v-else class="space-y-2">
+                    <div v-for="task in tasks" :key="task.id" class="glass-card rounded-lg p-4">
+                        <div class="flex items-start justify-between mb-2">
+                            <div class="flex items-center gap-2">
+                                <span class="badge" :class="'badge-' + task.direction">
+                                    {{ task.direction === 'outgoing' ? '&#x2191;' : '&#x2193;' }} {{ task.direction }}
+                                </span>
+                                <span class="badge" :class="'badge-' + task.status">{{ task.status }}</span>
+                            </div>
+                            <span class="text-[9px] text-gray-600">{{ formatTime(task.created_at) }}</span>
+                        </div>
+                        <div class="text-sm text-gray-200 mb-1">{{ task.description }}</div>
+                        <div v-if="task.content" class="text-[11px] text-gray-500 mb-2 line-clamp-2">{{ task.content }}</div>
+                        <div class="flex items-center gap-3 text-[9px] text-gray-600">
+                            <span>From: <span class="text-gray-400">{{ task.requester_id }}</span></span>
+                            <span v-if="task.responder_id">To: <span class="text-gray-400">{{ task.responder_id }}</span></span>
+                        </div>
+                        <!-- Expandable Response -->
+                        <div v-if="task.response_content" class="mt-3 pt-3 border-t border-gray-800">
+                            <button @click="toggleTaskExpand(task.id)" class="text-[10px] text-amber-400 hover:text-amber-300 mb-1">
+                                {{ expandedTasks[task.id] ? 'Hide Response' : 'Show Response' }}
+                            </button>
+                            <div v-if="expandedTasks[task.id]" class="text-[11px] text-gray-400 mt-1 bg-[#0d1117] rounded p-3 max-h-40 overflow-y-auto">
+                                {{ task.response_content }}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Traces Tab -->
+            <div v-if="activeTab === 'traces'" class="max-w-5xl mx-auto space-y-4">
+                <!-- Agent Filter -->
+                <div class="flex items-center gap-3">
+                    <span class="text-xs text-gray-500">Filter by agent:</span>
+                    <select v-model="traceAgentFilter" class="input-field text-xs" @change="loadTraces">
+                        <option value="">All agents</option>
+                        <option v-for="agent in traceAgents" :key="agent" :value="agent">{{ agent }}</option>
+                    </select>
+                </div>
+
+                <!-- Trace Table -->
+                <div v-if="traces.length === 0" class="text-center py-16">
+                    <div class="text-gray-600 text-sm">No traces found</div>
+                </div>
+                <div v-else class="space-y-1">
+                    <div class="grid grid-cols-12 gap-2 px-3 py-2 text-[9px] text-gray-600 uppercase tracking-wider font-semibold">
+                        <div class="col-span-2">Source</div>
+                        <div class="col-span-2">Trace ID</div>
+                        <div class="col-span-1">Type</div>
+                        <div class="col-span-3">Title</div>
+                        <div class="col-span-1">Duration</div>
+                        <div class="col-span-2">Time</div>
+                        <div class="col-span-1"></div>
+                    </div>
+                    <div v-for="trace in traces" :key="trace.id" class="glass-card rounded-lg">
+                        <div class="grid grid-cols-12 gap-2 px-3 py-2.5 items-center text-xs cursor-pointer" @click="toggleTraceExpand(trace.id)">
+                            <div class="col-span-2 text-gray-300 truncate">{{ trace.source_agent_id }}</div>
+                            <div class="col-span-2 text-gray-500 truncate font-mono text-[10px]">{{ trace.trace_id }}</div>
+                            <div class="col-span-1">
+                                <span class="text-[10px] font-semibold" :class="'span-' + (trace.span_type || 'EVENT')">{{ trace.span_type || 'EVENT' }}</span>
+                            </div>
+                            <div class="col-span-3 text-gray-300 truncate">{{ trace.title }}</div>
+                            <div class="col-span-1 text-gray-500 text-[10px]">{{ trace.duration_ms ? trace.duration_ms + 'ms' : '-' }}</div>
+                            <div class="col-span-2 text-gray-600 text-[10px]">{{ formatTime(trace.created_at) }}</div>
+                            <div class="col-span-1 text-right">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 text-gray-600 transition-transform inline" :class="{ 'rotate-180': expandedTraces[trace.id] }" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+                                </svg>
+                            </div>
+                        </div>
+                        <div v-if="expandedTraces[trace.id] && trace.content" class="px-3 pb-3">
+                            <div class="text-[11px] text-gray-500 bg-[#0d1117] rounded p-3 max-h-48 overflow-y-auto whitespace-pre-wrap">{{ trace.content }}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Config Tab -->
+            <div v-if="activeTab === 'config'" class="max-w-2xl mx-auto space-y-4">
+                <div class="glass-card rounded-lg p-6 space-y-4">
+                    <div class="text-xs text-gray-400 uppercase tracking-wider font-semibold mb-2">Group Configuration</div>
+
+                    <div class="space-y-3">
+                        <div>
+                            <label class="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">LFS Proxy URL</label>
+                            <input v-model="configForm.lfs_proxy_url" class="input-field w-full" placeholder="http://localhost:8080">
+                        </div>
+                        <div>
+                            <label class="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">API Key</label>
+                            <input v-model="configForm.api_key" type="password" class="input-field w-full" placeholder="API key (masked)">
+                        </div>
+                        <div>
+                            <label class="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Kafka Brokers</label>
+                            <input v-model="configForm.kafka_brokers" class="input-field w-full" placeholder="localhost:9092">
+                        </div>
+                        <div>
+                            <label class="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Consumer Group</label>
+                            <input v-model="configForm.consumer_group" class="input-field w-full" placeholder="consumer group">
+                        </div>
+                        <div>
+                            <label class="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Agent ID</label>
+                            <input v-model="configForm.agent_id" class="input-field w-full" placeholder="agent ID">
+                        </div>
+                        <div>
+                            <label class="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Poll Interval (ms)</label>
+                            <input v-model="configForm.poll_interval_ms" type="number" class="input-field w-full" placeholder="2000">
+                        </div>
+                    </div>
+
+                    <div class="flex items-center justify-between pt-2">
+                        <div v-if="configSaved" class="text-[11px]" :class="configRequiresRejoin ? 'text-amber-400' : 'text-green-400'">
+                            {{ configRequiresRejoin ? 'Saved. Rejoin required for changes to take effect.' : 'Saved.' }}
+                        </div>
+                        <div v-else></div>
+                        <button @click="saveConfig" :disabled="savingConfig" class="btn-primary">
+                            {{ savingConfig ? 'SAVING...' : 'SAVE CONFIG' }}
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+        </main>
+
+        <!-- Join Modal -->
+        <div v-if="showJoinModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60" @click.self="showJoinModal = false">
+            <div class="glass rounded-xl border border-gray-700 shadow-2xl p-6" style="width: 420px; max-width: 92vw;">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="text-sm font-bold text-amber-400 tracking-widest">JOIN GROUP</div>
+                    <button @click="showJoinModal = false" class="text-gray-500 hover:text-white text-lg">&times;</button>
+                </div>
+                <div class="space-y-3">
+                    <div>
+                        <label class="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Group Name *</label>
+                        <input v-model="joinForm.group_name" class="input-field w-full" placeholder="my-agent-team" @keyup.enter="joinGroup">
+                    </div>
+                    <div>
+                        <label class="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">LFS Proxy URL</label>
+                        <input v-model="joinForm.lfs_proxy_url" class="input-field w-full" placeholder="http://localhost:8080">
+                    </div>
+                    <div>
+                        <label class="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Kafka Brokers</label>
+                        <input v-model="joinForm.kafka_brokers" class="input-field w-full" placeholder="localhost:9092">
+                    </div>
+                    <div>
+                        <label class="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Agent ID (optional)</label>
+                        <input v-model="joinForm.agent_id" class="input-field w-full" placeholder="auto-generated if empty">
+                    </div>
+                </div>
+                <div v-if="joinError" class="text-xs text-red-400 mt-3">{{ joinError }}</div>
+                <div class="flex justify-end gap-2 mt-5">
+                    <button @click="showJoinModal = false" class="btn-ghost">Cancel</button>
+                    <button @click="joinGroup" :disabled="!joinForm.group_name.trim() || joining" class="btn-primary">
+                        {{ joining ? 'JOINING...' : 'JOIN' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toast -->
+        <div v-if="toast" class="fixed bottom-6 right-6 z-50 glass rounded-lg px-4 py-3 shadow-xl border"
+            :class="toast.type === 'error' ? 'border-red-800 text-red-400' : 'border-green-800 text-green-400'">
+            <div class="text-xs font-medium">{{ toast.message }}</div>
+        </div>
+
+    </div>
+
+    <script>
+    const { createApp, ref, reactive, computed, onMounted, onUnmounted, watch } = Vue
+
+    createApp({
+        setup() {
+            const tabs = [
+                { id: 'overview', label: 'Overview' },
+                { id: 'members', label: 'Members' },
+                { id: 'tasks', label: 'Tasks' },
+                { id: 'traces', label: 'Traces' },
+                { id: 'config', label: 'Config' },
+            ]
+            const activeTab = ref('overview')
+
+            // State
+            const status = ref({ active: false, group_name: '', member_count: 0, agent_id: '', lfs_proxy_url: '', lfs_healthy: false })
+            const members = ref([])
+            const tasks = ref([])
+            const traces = ref([])
+            const config = ref({})
+            const groupActive = computed(() => status.value.active === true)
+
+            // UI state
+            const showJoinModal = ref(false)
+            const joining = ref(false)
+            const leaving = ref(false)
+            const joinError = ref('')
+            const quickJoinName = ref('')
+            const toast = ref(null)
+            const expandedTasks = reactive({})
+            const expandedTraces = reactive({})
+
+            // Task form
+            const taskDescription = ref('')
+            const taskContent = ref('')
+            const submittingTask = ref(false)
+            const taskFilter = ref('')
+            const taskStatusFilter = ref('')
+
+            // Trace filter
+            const traceAgentFilter = ref('')
+            const traceAgents = computed(() => {
+                const agents = new Set(traces.value.map(t => t.source_agent_id))
+                return [...agents].sort()
+            })
+
+            // Config form
+            const configForm = reactive({ lfs_proxy_url: '', api_key: '', kafka_brokers: '', consumer_group: '', agent_id: '', poll_interval_ms: '' })
+            const savingConfig = ref(false)
+            const configSaved = ref(false)
+            const configRequiresRejoin = ref(false)
+
+            // Join form
+            const joinForm = reactive({ group_name: '', lfs_proxy_url: '', kafka_brokers: '', agent_id: '' })
+
+            // Polling
+            let pollTimer = null
+
+            function showToast(message, type = 'success') {
+                toast.value = { message, type }
+                setTimeout(() => { toast.value = null }, 3000)
+            }
+
+            async function loadStatus() {
+                try {
+                    const res = await fetch('/api/v1/group/status')
+                    status.value = await res.json()
+                } catch (e) { /* ignore */ }
+            }
+
+            async function loadMembers() {
+                try {
+                    const res = await fetch('/api/v1/group/members')
+                    members.value = await res.json()
+                } catch (e) { /* ignore */ }
+            }
+
+            async function loadTasks() {
+                try {
+                    let url = '/api/v1/group/tasks?limit=100'
+                    if (taskFilter.value) url += '&direction=' + taskFilter.value
+                    if (taskStatusFilter.value) url += '&status=' + taskStatusFilter.value
+                    const res = await fetch(url)
+                    tasks.value = await res.json()
+                } catch (e) { /* ignore */ }
+            }
+
+            async function loadTraces() {
+                try {
+                    let url = '/api/v1/group/traces?limit=100'
+                    if (traceAgentFilter.value) url += '&agent_id=' + encodeURIComponent(traceAgentFilter.value)
+                    const res = await fetch(url)
+                    traces.value = await res.json()
+                } catch (e) { /* ignore */ }
+            }
+
+            async function loadConfig() {
+                try {
+                    const res = await fetch('/api/v1/group/config')
+                    const data = await res.json()
+                    config.value = data
+                    configForm.lfs_proxy_url = data.lfs_proxy_url || ''
+                    configForm.api_key = ''
+                    configForm.kafka_brokers = data.kafka_brokers || ''
+                    configForm.consumer_group = data.consumer_group || ''
+                    configForm.agent_id = data.agent_id || ''
+                    configForm.poll_interval_ms = data.poll_interval_ms || ''
+                } catch (e) { /* ignore */ }
+            }
+
+            async function loadAll() {
+                await loadStatus()
+                await loadMembers()
+            }
+
+            async function joinGroup() {
+                if (!joinForm.group_name.trim()) return
+                joining.value = true
+                joinError.value = ''
+                try {
+                    const res = await fetch('/api/v1/group/join', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(joinForm),
+                    })
+                    if (!res.ok) {
+                        joinError.value = await res.text()
+                        return
+                    }
+                    status.value = await res.json()
+                    showJoinModal.value = false
+                    joinForm.group_name = ''
+                    joinForm.lfs_proxy_url = ''
+                    joinForm.kafka_brokers = ''
+                    joinForm.agent_id = ''
+                    showToast('Joined group: ' + status.value.group_name)
+                    await loadAll()
+                    await loadConfig()
+                } catch (e) {
+                    joinError.value = e.message
+                } finally {
+                    joining.value = false
+                }
+            }
+
+            async function quickJoin() {
+                joinForm.group_name = quickJoinName.value
+                await joinGroup()
+                quickJoinName.value = ''
+            }
+
+            async function leaveGroup() {
+                leaving.value = true
+                try {
+                    const res = await fetch('/api/v1/group/leave', { method: 'POST' })
+                    if (!res.ok) {
+                        showToast(await res.text(), 'error')
+                        return
+                    }
+                    showToast('Left group')
+                    await loadAll()
+                } catch (e) {
+                    showToast(e.message, 'error')
+                } finally {
+                    leaving.value = false
+                }
+            }
+
+            async function submitTask() {
+                if (!taskDescription.value.trim()) return
+                submittingTask.value = true
+                try {
+                    const res = await fetch('/api/v1/group/tasks/submit', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ description: taskDescription.value, content: taskContent.value }),
+                    })
+                    if (!res.ok) {
+                        showToast(await res.text(), 'error')
+                        return
+                    }
+                    const data = await res.json()
+                    showToast('Task submitted: ' + data.task_id)
+                    taskDescription.value = ''
+                    taskContent.value = ''
+                    await loadTasks()
+                } catch (e) {
+                    showToast(e.message, 'error')
+                } finally {
+                    submittingTask.value = false
+                }
+            }
+
+            async function saveConfig() {
+                savingConfig.value = true
+                configSaved.value = false
+                try {
+                    const body = {}
+                    if (configForm.lfs_proxy_url) body.lfs_proxy_url = configForm.lfs_proxy_url
+                    if (configForm.api_key) body.api_key = configForm.api_key
+                    if (configForm.kafka_brokers) body.kafka_brokers = configForm.kafka_brokers
+                    if (configForm.consumer_group) body.consumer_group = configForm.consumer_group
+                    if (configForm.agent_id) body.agent_id = configForm.agent_id
+                    if (configForm.poll_interval_ms) body.poll_interval_ms = String(configForm.poll_interval_ms)
+
+                    const res = await fetch('/api/v1/group/config', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body),
+                    })
+                    if (!res.ok) {
+                        showToast(await res.text(), 'error')
+                        return
+                    }
+                    const data = await res.json()
+                    configSaved.value = true
+                    configRequiresRejoin.value = data.requires_rejoin === true
+                } catch (e) {
+                    showToast(e.message, 'error')
+                } finally {
+                    savingConfig.value = false
+                }
+            }
+
+            function toggleTaskExpand(id) {
+                expandedTasks[id] = !expandedTasks[id]
+            }
+
+            function toggleTraceExpand(id) {
+                expandedTraces[id] = !expandedTraces[id]
+            }
+
+            function parseCaps(capsStr) {
+                try { return JSON.parse(capsStr || '[]') } catch { return [] }
+            }
+
+            function parseChannels(chStr) {
+                try { return JSON.parse(chStr || '[]') } catch { return [] }
+            }
+
+            function relativeTime(dateStr) {
+                if (!dateStr) return 'never'
+                const date = new Date(dateStr)
+                const now = new Date()
+                const diff = Math.floor((now - date) / 1000)
+                if (diff < 10) return 'just now'
+                if (diff < 60) return diff + 's ago'
+                if (diff < 3600) return Math.floor(diff / 60) + 'm ago'
+                if (diff < 86400) return Math.floor(diff / 3600) + 'h ago'
+                return Math.floor(diff / 86400) + 'd ago'
+            }
+
+            function formatTime(dateStr) {
+                if (!dateStr) return ''
+                const d = new Date(dateStr)
+                return d.toLocaleString('en-GB', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+            }
+
+            // Watch tab changes to load data
+            watch(activeTab, (tab) => {
+                if (tab === 'tasks') loadTasks()
+                if (tab === 'traces') loadTraces()
+                if (tab === 'config') loadConfig()
+                if (tab === 'members') loadMembers()
+            })
+
+            watch([taskFilter, taskStatusFilter], () => loadTasks())
+
+            onMounted(async () => {
+                await loadAll()
+                await loadConfig()
+                // Poll every 10s
+                pollTimer = setInterval(async () => {
+                    await loadStatus()
+                    await loadMembers()
+                    if (activeTab.value === 'tasks') await loadTasks()
+                    if (activeTab.value === 'traces') await loadTraces()
+                }, 10000)
+            })
+
+            onUnmounted(() => {
+                if (pollTimer) clearInterval(pollTimer)
+            })
+
+            return {
+                tabs, activeTab,
+                status, members, tasks, traces, config, groupActive,
+                showJoinModal, joining, leaving, joinError, quickJoinName, toast,
+                expandedTasks, expandedTraces,
+                taskDescription, taskContent, submittingTask, taskFilter, taskStatusFilter,
+                traceAgentFilter, traceAgents,
+                configForm, savingConfig, configSaved, configRequiresRejoin,
+                joinForm,
+                joinGroup, quickJoin, leaveGroup, submitTask, saveConfig,
+                toggleTaskExpand, toggleTraceExpand,
+                parseCaps, parseChannels, relativeTime, formatTime,
+                loadTraces,
+            }
+        }
+    }).mount('#app')
+    </script>
+</body>
+</html>

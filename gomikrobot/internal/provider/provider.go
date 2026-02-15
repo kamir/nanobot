@@ -92,3 +92,22 @@ type Usage struct {
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
 }
+
+// Embedder is an optional interface for providers that support embedding.
+// Not all providers implement this (e.g. LocalWhisperProvider does not).
+// Callers should use type assertion: if emb, ok := prov.(Embedder); ok { ... }
+type Embedder interface {
+	Embed(ctx context.Context, req *EmbeddingRequest) (*EmbeddingResponse, error)
+}
+
+// EmbeddingRequest contains parameters for an embedding request.
+type EmbeddingRequest struct {
+	Input string
+	Model string // default: "text-embedding-3-small"
+}
+
+// EmbeddingResponse contains the embedding vector.
+type EmbeddingResponse struct {
+	Vector []float32
+	Usage  Usage
+}

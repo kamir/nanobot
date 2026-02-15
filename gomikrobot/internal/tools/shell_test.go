@@ -8,7 +8,8 @@ import (
 )
 
 func TestExecTool_Basic(t *testing.T) {
-	tool := NewExecTool(5*time.Second, false, "")
+	tool := NewExecTool(5*time.Second, false, "", nil)
+	tool.StrictAllowList = false
 
 	result, err := tool.Execute(context.Background(), map[string]any{
 		"command": "echo hello",
@@ -22,7 +23,8 @@ func TestExecTool_Basic(t *testing.T) {
 }
 
 func TestExecTool_Timeout(t *testing.T) {
-	tool := NewExecTool(100*time.Millisecond, false, "")
+	tool := NewExecTool(100*time.Millisecond, false, "", nil)
+	tool.StrictAllowList = false
 
 	result, err := tool.Execute(context.Background(), map[string]any{
 		"command": "sleep 10",
@@ -36,7 +38,8 @@ func TestExecTool_Timeout(t *testing.T) {
 }
 
 func TestExecTool_DenyPatterns(t *testing.T) {
-	tool := NewExecTool(5*time.Second, false, "")
+	tool := NewExecTool(5*time.Second, false, "", nil)
+	tool.StrictAllowList = false
 
 	dangerousCommands := []string{
 		"rm -rf /",
@@ -50,7 +53,7 @@ func TestExecTool_DenyPatterns(t *testing.T) {
 		result, _ := tool.Execute(context.Background(), map[string]any{
 			"command": cmd,
 		})
-		if !strings.Contains(result, "Error") && !strings.Contains(result, "blocked") {
+		if !strings.Contains(result, "Error") && !strings.Contains(result, "blocked") && !strings.Contains(result, blockedAttackMessage) {
 			t.Errorf("expected '%s' to be blocked, got '%s'", cmd, result)
 		}
 	}
@@ -58,7 +61,7 @@ func TestExecTool_DenyPatterns(t *testing.T) {
 
 func TestExecTool_PathTraversal(t *testing.T) {
 	tmpDir := t.TempDir()
-	tool := NewExecTool(5*time.Second, true, tmpDir)
+	tool := NewExecTool(5*time.Second, true, tmpDir, nil)
 
 	// Path traversal in command should be blocked
 	result, _ := tool.Execute(context.Background(), map[string]any{
@@ -71,7 +74,7 @@ func TestExecTool_PathTraversal(t *testing.T) {
 
 func TestExecTool_WorkingDir(t *testing.T) {
 	tmpDir := t.TempDir()
-	tool := NewExecTool(5*time.Second, false, tmpDir)
+	tool := NewExecTool(5*time.Second, false, tmpDir, nil)
 
 	result, err := tool.Execute(context.Background(), map[string]any{
 		"command": "pwd",
@@ -85,7 +88,8 @@ func TestExecTool_WorkingDir(t *testing.T) {
 }
 
 func TestExecTool_StderrCapture(t *testing.T) {
-	tool := NewExecTool(5*time.Second, false, "")
+	tool := NewExecTool(5*time.Second, false, "", nil)
+	tool.StrictAllowList = false
 
 	result, err := tool.Execute(context.Background(), map[string]any{
 		"command": "echo error >&2",
@@ -99,7 +103,8 @@ func TestExecTool_StderrCapture(t *testing.T) {
 }
 
 func TestExecTool_ExitCode(t *testing.T) {
-	tool := NewExecTool(5*time.Second, false, "")
+	tool := NewExecTool(5*time.Second, false, "", nil)
+	tool.StrictAllowList = false
 
 	result, err := tool.Execute(context.Background(), map[string]any{
 		"command": "exit 42",

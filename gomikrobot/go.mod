@@ -7,6 +7,7 @@ toolchain go1.24.13
 require (
 	github.com/fatih/color v1.18.0
 	github.com/kelseyhightower/envconfig v1.4.0
+	github.com/segmentio/kafka-go v0.4.50
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/spf13/cobra v1.10.2
 	go.mau.fi/whatsmeow v0.0.0-20260129212019-7787ab952245
@@ -30,9 +31,11 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.15 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rs/zerolog v1.34.0 // indirect
-	github.com/segmentio/kafka-go v0.4.50 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/vektah/gqlparser/v2 v2.5.27 // indirect
+	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
+	github.com/xdg-go/scram v1.1.2 // indirect
+	github.com/xdg-go/stringprep v1.0.4 // indirect
 	go.mau.fi/libsignal v0.2.1 // indirect
 	go.mau.fi/util v0.9.5 // indirect
 	golang.org/x/crypto v0.47.0 // indirect
