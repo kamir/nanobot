@@ -21,6 +21,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.24.13"
+          cache-dependency-path: gomikrobot/go.sum
 
       - name: Build
         working-directory: gomikrobot
@@ -54,4 +55,3 @@ jobs:
         with:
           files: |
             dist/**/*
-          overwrite_files: true
