@@ -16,6 +16,10 @@ type AgentIdentity struct {
 	Model        string   `json:"model"`
 	JoinedAt     string   `json:"joined_at"`
 	Status       string   `json:"status"`
+	ParentID     string   `json:"parent_id,omitempty"`
+	ZoneID       string   `json:"zone_id,omitempty"`
+	Endpoint     string   `json:"endpoint,omitempty"`
+	Role         string   `json:"role,omitempty"` // "orchestrator", "worker", "observer"
 }
 
 // GroupEnvelope is the wire format for all Kafka group messages.

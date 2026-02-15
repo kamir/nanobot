@@ -50,6 +50,9 @@ jobs:
         with:
           path: dist
 
+      - name: Inspect dist
+        run: ls -R dist
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:

@@ -6,13 +6,14 @@ import "time"
 // Config is the root configuration struct.
 // Top-level groups: Paths, Model, Channels, Providers, Gateway, Tools.
 type Config struct {
-	Paths     PathsConfig     `json:"paths"`
-	Model     ModelConfig     `json:"model"`
-	Channels  ChannelsConfig  `json:"channels"`
-	Providers ProvidersConfig `json:"providers"`
-	Gateway   GatewayConfig   `json:"gateway"`
-	Tools     ToolsConfig     `json:"tools"`
-	Group     GroupConfig     `json:"group"`
+	Paths        PathsConfig        `json:"paths"`
+	Model        ModelConfig        `json:"model"`
+	Channels     ChannelsConfig     `json:"channels"`
+	Providers    ProvidersConfig    `json:"providers"`
+	Gateway      GatewayConfig      `json:"gateway"`
+	Tools        ToolsConfig        `json:"tools"`
+	Group        GroupConfig        `json:"group"`
+	Orchestrator OrchestratorConfig `json:"orchestrator"`
 }
 
 // ---------------------------------------------------------------------------
@@ -122,6 +123,22 @@ type GatewayConfig struct {
 	Host          string `json:"host" envconfig:"HOST"`
 	Port          int    `json:"port" envconfig:"PORT"`
 	DashboardPort int    `json:"dashboardPort" envconfig:"DASHBOARD_PORT"`
+	AuthToken     string `json:"authToken" envconfig:"AUTH_TOKEN"`
+	TLSCert       string `json:"tlsCert" envconfig:"TLS_CERT"`
+	TLSKey        string `json:"tlsKey" envconfig:"TLS_KEY"`
+}
+
+// ---------------------------------------------------------------------------
+// Orchestrator – multi-agent coordination
+// ---------------------------------------------------------------------------
+
+// OrchestratorConfig contains settings for the agent orchestrator.
+type OrchestratorConfig struct {
+	Enabled  bool   `json:"enabled" envconfig:"ENABLED"`
+	Role     string `json:"role" envconfig:"ROLE"`         // "orchestrator", "worker", "observer"
+	ZoneID   string `json:"zoneId" envconfig:"ZONE_ID"`
+	ParentID string `json:"parentId" envconfig:"PARENT_ID"`
+	Endpoint string `json:"endpoint" envconfig:"ENDPOINT"` // This agent's remote API URL
 }
 
 // ---------------------------------------------------------------------------
@@ -208,6 +225,10 @@ func DefaultConfig() *Config {
 			Enabled:        false,
 			LFSProxyURL:    "http://localhost:8080",
 			PollIntervalMs: 2000,
+		},
+		Orchestrator: OrchestratorConfig{
+			Enabled: false,
+			Role:    "worker",
 		},
 	}
 }
