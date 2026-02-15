@@ -8,7 +8,7 @@ import (
 var (
 	// version can be overridden at build time via:
 	// go build -ldflags "-X github.com/kamir/gomikrobot/cmd/gomikrobot/cmd.version=1.2.3"
-	version = "2.1.0"
+	version = "2.2.0"
 	logo    = `
    ____       __  __ _ _              ____        _   
   / ___| ___ |  \/  (_) | ___ __ ___ | __ )  ___ | |_ 
@@ -41,4 +41,5 @@ func init() {
 	rootCmd.AddCommand(agentCmd)
 	rootCmd.AddCommand(gatewayCmd)
 	rootCmd.AddCommand(groupCmd)
+	rootCmd.AddCommand(ksharkCmd)
 }
