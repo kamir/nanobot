@@ -14,3 +14,29 @@ build/
 *.pyzz
 .venv/
 __pycache__/
+
+# macOS
+.DS_Store
+
+# Dependencies
+node_modules/
+
+# Private — not for public repo
+research-drafts/
+gomikrobot/SPEC/
+hardening/
+rebranding/
+morphing/
+landing/
+nanobot/
+tests/
+bridge/
+community/
+**/DEVTASKS/
+**/requirements/
+**/operations/
+.vscode/
+pyproject.toml
+
+# Compiled binaries
+gomikrobot/gomikrobot
