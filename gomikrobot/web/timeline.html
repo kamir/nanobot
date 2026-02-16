@@ -128,6 +128,27 @@
             box-shadow: 0 0 16px rgba(255,255,255,0.7), 0 0 32px rgba(245,158,11,0.6);
         }
 
+        .memory-icon {
+            background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.9), rgba(168,85,247,0.45) 35%, rgba(103,232,249,0.9) 70%);
+            box-shadow: none;
+            transition: box-shadow 0.3s ease;
+        }
+        .memory-icon.active {
+            box-shadow: 0 0 16px rgba(255,255,255,0.7), 0 0 32px rgba(168,85,247,0.6);
+        }
+
+        .mem-gauge-bar {
+            height: 6px;
+            border-radius: 3px;
+            background: #21262d;
+            overflow: hidden;
+        }
+        .mem-gauge-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.4s ease;
+        }
+
     </style>
 </head>
 
@@ -242,21 +263,27 @@
                         </div>
                     </div>
 
-                    <button @click="toggleTracePanel" title="Trace Viewer"
-                        class="w-9 h-9 rounded-full flex items-center justify-center trace-icon transition-all duration-300"
-                        :class="{ active: tracePanelVisible }">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-white drop-shadow-[0_0_8px_rgba(251,146,60,0.85)]" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M3 3h4v4H3V3zm7 7h4v4h-4v-4zm7 7h4v4h-4v-4zM5 7h2v4h4v2H5V7zm7 7h2v4h4v2h-6v-6z"/>
-                        </svg>
-                    </button>
+                    <div class="relative group">
+                        <button @click="toggleTracePanel" title="Trace Viewer"
+                            class="w-9 h-9 rounded-full flex items-center justify-center trace-icon transition-all duration-300"
+                            :class="{ active: tracePanelVisible }">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-white drop-shadow-[0_0_8px_rgba(251,146,60,0.85)]" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M3 3h4v4H3V3zm7 7h4v4h-4v-4zm7 7h4v4h-4v-4zM5 7h2v4h4v2H5V7zm7 7h2v4h4v2h-6v-6z"/>
+                            </svg>
+                        </button>
+                        <span class="pointer-events-none absolute left-1/2 -translate-x-1/2 top-full mt-1 whitespace-nowrap rounded bg-gray-800 border border-gray-600 px-2 py-0.5 text-[10px] text-orange-400 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-40">Trace Viewer</span>
+                    </div>
 
-                    <button @click="toggleTasksPanel" title="Tasks"
-                        class="w-9 h-9 rounded-full flex items-center justify-center tasks-icon transition-all duration-300"
-                        :class="{ active: tasksPanelVisible }">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-white drop-shadow-[0_0_8px_rgba(6,182,212,0.85)]" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-9 14l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-                        </svg>
-                    </button>
+                    <div class="relative group">
+                        <button @click="toggleTasksPanel" title="Tasks"
+                            class="w-9 h-9 rounded-full flex items-center justify-center tasks-icon transition-all duration-300"
+                            :class="{ active: tasksPanelVisible }">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-white drop-shadow-[0_0_8px_rgba(6,182,212,0.85)]" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-9 14l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                            </svg>
+                        </button>
+                        <span class="pointer-events-none absolute left-1/2 -translate-x-1/2 top-full mt-1 whitespace-nowrap rounded bg-gray-800 border border-gray-600 px-2 py-0.5 text-[10px] text-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-40">Tasks</span>
+                    </div>
 
                     <!-- Group Orb -->
                     <div v-if="appMode !== 'standalone' && groupStatus.active" class="relative group" @click="toggleGroupPanel">
@@ -265,6 +292,25 @@
                             <span class="text-xs font-bold text-black">G</span>
                         </div>
                         <span class="pointer-events-none absolute left-1/2 -translate-x-1/2 top-full mt-1 whitespace-nowrap rounded bg-gray-800 border border-gray-600 px-2 py-0.5 text-[10px] text-amber-400 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-40">Group: {{ groupStatus.group_name }}</span>
+                    </div>
+
+                    <!-- Memory Orb -->
+                    <div class="relative group">
+                        <button @click="toggleMemoryPanel" title="Memory Manager"
+                            class="w-9 h-9 rounded-full flex items-center justify-center memory-icon transition-all duration-300"
+                            :class="{ active: memoryPanelVisible }">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-white drop-shadow-[0_0_8px_rgba(168,85,247,0.85)]" viewBox="0 0 24 24" fill="currentColor">
+                                <rect x="6" y="4" width="12" height="16" rx="2" fill="currentColor" opacity="0.7"/>
+                                <rect x="9" y="7" width="6" height="6" rx="1" fill="#0d1117"/>
+                                <line x1="3" y1="8" x2="6" y2="8" stroke="currentColor" stroke-width="1.5"/>
+                                <line x1="3" y1="12" x2="6" y2="12" stroke="currentColor" stroke-width="1.5"/>
+                                <line x1="3" y1="16" x2="6" y2="16" stroke="currentColor" stroke-width="1.5"/>
+                                <line x1="18" y1="8" x2="21" y2="8" stroke="currentColor" stroke-width="1.5"/>
+                                <line x1="18" y1="12" x2="21" y2="12" stroke="currentColor" stroke-width="1.5"/>
+                                <line x1="18" y1="16" x2="21" y2="16" stroke="currentColor" stroke-width="1.5"/>
+                            </svg>
+                        </button>
+                        <span class="pointer-events-none absolute left-1/2 -translate-x-1/2 top-full mt-1 whitespace-nowrap rounded bg-gray-800 border border-gray-600 px-2 py-0.5 text-[10px] text-purple-300 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-40">Memory: {{ memoryTotalChunks.toLocaleString() }} chunks</span>
                     </div>
                 </div>
 
@@ -1290,6 +1336,143 @@
                 </div>
             </div>
 
+            <!-- Memory Manager Panel -->
+            <div v-if="memoryPanelVisible" class="fixed inset-0 z-50 flex items-center justify-center"
+                @click.self="hideMemoryPanel">
+                <div class="glass rounded-xl border border-gray-700 overflow-hidden shadow-2xl"
+                    style="width: 720px; max-width: 95vw; height: 700px; max-height: 90vh;">
+                    <!-- Header -->
+                    <div class="p-4 border-b border-gray-800 bg-[#0d1117]/90 backdrop-blur">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-3">
+                                <div class="text-sm font-bold tracking-widest" style="color: #a855f7; text-shadow: 0 0 10px rgba(168,85,247,0.8);">MEMORY MANAGER</div>
+                                <span class="text-[10px] px-2 py-0.5 rounded-full bg-purple-900/30 text-purple-300">{{ memoryTotalChunks.toLocaleString() }} / {{ memoryMaxChunks.toLocaleString() }} chunks</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <button @click="memoryPruneNow" class="text-[10px] px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-white">Prune Now</button>
+                                <button @click="loadMemoryStatus" class="text-[10px] px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-white">Refresh</button>
+                                <button @click="hideMemoryPanel" title="Close"
+                                    class="text-xs px-2 py-1 rounded bg-[#3b1118] hover:bg-[#6b1f2c] text-white shadow-none hover:shadow-[0_0_14px_rgba(200,80,110,0.85)]">&#x2715;</button>
+                            </div>
+                        </div>
+                        <!-- Capacity gauge -->
+                        <div class="mt-3">
+                            <div class="mem-gauge-bar">
+                                <div class="mem-gauge-fill" :style="{ width: memoryUsagePercent + '%', background: memoryUsagePercent > 90 ? '#f85149' : memoryUsagePercent > 70 ? '#fbbf24' : '#a855f7' }"></div>
+                            </div>
+                            <div class="flex justify-between text-[9px] text-gray-500 mt-1">
+                                <span>0</span>
+                                <span>{{ memoryUsagePercent }}% used</span>
+                                <span>{{ memoryMaxChunks.toLocaleString() }}</span>
+                            </div>
+                        </div>
+                        <div v-if="memoryActionStatus" class="text-[10px] mt-2" :class="memoryActionOk ? 'text-green-400' : 'text-red-400'">{{ memoryActionStatus }}</div>
+                    </div>
+                    <!-- Body -->
+                    <div class="overflow-y-auto p-4 space-y-4" style="max-height: calc(100% - 140px);">
+                        <!-- Memory Layers -->
+                        <div class="text-[10px] uppercase text-gray-500 tracking-wider mb-1">Memory Layers</div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div v-for="layer in memoryLayers" :key="layer.name"
+                                class="border border-gray-700 rounded-lg p-3 hover:border-purple-500/50 transition-colors">
+                                <div class="flex items-center justify-between mb-2">
+                                    <div class="flex items-center gap-2">
+                                        <div class="w-2.5 h-2.5 rounded-full" :style="{ background: layer.color }"></div>
+                                        <span class="text-xs font-bold text-gray-200 uppercase">{{ layer.name }}</span>
+                                    </div>
+                                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400">{{ layer.ttl_days > 0 ? layer.ttl_days + 'd TTL' : 'permanent' }}</span>
+                                </div>
+                                <div class="text-[10px] text-gray-500 mb-2">{{ layer.description }}</div>
+                                <div class="flex items-center justify-between">
+                                    <div class="flex-1 mr-3">
+                                        <div class="mem-gauge-bar">
+                                            <div class="mem-gauge-fill" :style="{ width: (memoryMaxChunks > 0 ? (layer.chunk_count / memoryMaxChunks * 100) : 0) + '%', background: layer.color }"></div>
+                                        </div>
+                                        <div class="text-[9px] text-gray-500 mt-0.5">{{ layer.chunk_count.toLocaleString() }} chunks</div>
+                                    </div>
+                                    <button @click="memoryResetLayer(layer.name)" class="text-[9px] px-1.5 py-0.5 rounded bg-red-900/30 hover:bg-red-900/50 text-red-400 whitespace-nowrap">Reset</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Observer + ER1 Status Row -->
+                        <div class="grid grid-cols-2 gap-3">
+                            <!-- Observer -->
+                            <div class="border border-gray-700 rounded-lg p-3">
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="text-[10px] uppercase text-cyan-400 tracking-wider font-bold">Observer</span>
+                                    <span class="text-[10px] px-1.5 py-0.5 rounded" :class="memoryObserver.enabled ? 'bg-green-900/40 text-green-400' : 'bg-gray-800 text-gray-500'">{{ memoryObserver.enabled ? 'ON' : 'OFF' }}</span>
+                                </div>
+                                <div class="space-y-1 text-[10px] text-gray-400">
+                                    <div>Observations: <span class="text-gray-200">{{ memoryObserver.observation_count }}</span></div>
+                                    <div>Queue depth: <span class="text-gray-200">{{ memoryObserver.queue_depth }}</span></div>
+                                    <div v-if="memoryObserver.last_observation">Last: <span class="text-gray-200">{{ new Date(memoryObserver.last_observation).toLocaleString() }}</span></div>
+                                </div>
+                            </div>
+                            <!-- ER1 -->
+                            <div class="border border-gray-700 rounded-lg p-3">
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="text-[10px] uppercase text-amber-400 tracking-wider font-bold">ER1 Sync</span>
+                                    <span class="text-[10px] px-1.5 py-0.5 rounded" :class="memoryER1.connected ? 'bg-green-900/40 text-green-400' : 'bg-gray-800 text-gray-500'">{{ memoryER1.connected ? 'CONNECTED' : 'OFF' }}</span>
+                                </div>
+                                <div class="space-y-1 text-[10px] text-gray-400">
+                                    <div>Synced items: <span class="text-gray-200">{{ memoryER1.synced_count }}</span></div>
+                                    <div v-if="memoryER1.last_sync">Last sync: <span class="text-gray-200">{{ new Date(memoryER1.last_sync).toLocaleString() }}</span></div>
+                                    <div v-if="memoryER1.url">URL: <span class="text-gray-300">{{ memoryER1.url }}</span></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Expertise -->
+                        <div v-if="memoryExpertise.length > 0">
+                            <div class="text-[10px] uppercase text-gray-500 tracking-wider mb-2">Expertise Tracking</div>
+                            <div class="border border-gray-700 rounded-lg p-3 space-y-2">
+                                <div v-for="skill in memoryExpertise" :key="skill.skill" class="flex items-center gap-2">
+                                    <span class="text-[10px] text-gray-300 w-20 truncate" :title="skill.skill">{{ skill.skill }}</span>
+                                    <div class="flex-1 mem-gauge-bar">
+                                        <div class="mem-gauge-fill" :style="{ width: (skill.score * 100) + '%', background: skill.trend === 'improving' ? '#22c55e' : skill.trend === 'declining' ? '#f85149' : '#58a6ff' }"></div>
+                                    </div>
+                                    <span class="text-[10px] text-gray-400 w-10 text-right">{{ Math.round(skill.score * 100) }}%</span>
+                                    <span class="text-[9px] w-6" :class="skill.trend === 'improving' ? 'text-green-400' : skill.trend === 'declining' ? 'text-red-400' : 'text-gray-500'">{{ skill.trend === 'improving' ? '&#x25B2;' : skill.trend === 'declining' ? '&#x25BC;' : '&#x2500;' }}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Working Memory -->
+                        <div v-if="memoryWorkingMemory.entries > 0">
+                            <div class="flex items-center justify-between mb-2">
+                                <div class="text-[10px] uppercase text-gray-500 tracking-wider">Working Memory <span class="text-gray-400">({{ memoryWorkingMemory.entries }} entries)</span></div>
+                                <button @click="memoryResetLayer('working_memory')" class="text-[9px] px-1.5 py-0.5 rounded bg-red-900/30 hover:bg-red-900/50 text-red-400">Reset</button>
+                            </div>
+                            <div class="border border-gray-700 rounded-lg p-3">
+                                <pre class="text-[10px] text-gray-300 whitespace-pre-wrap max-h-32 overflow-y-auto">{{ memoryWorkingMemory.preview || '(empty)' }}</pre>
+                            </div>
+                        </div>
+
+                        <!-- Reset All -->
+                        <div class="pt-2 border-t border-gray-800 flex items-center justify-between">
+                            <div class="text-[10px] text-gray-500">Danger zone: irreversible actions</div>
+                            <div class="flex items-center gap-2">
+                                <button @click="memoryResetAll" class="text-[10px] px-3 py-1 rounded bg-red-900/40 hover:bg-red-900/60 text-red-400 border border-red-800/50">Reset All Memory</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Memory Reset Confirmation -->
+            <div v-if="memoryConfirmVisible" class="fixed inset-0 z-[60] flex items-center justify-center bg-black/50"
+                @click.self="memoryConfirmVisible = false">
+                <div class="glass rounded-xl border border-red-800/50 p-6 shadow-2xl" style="width: 400px; max-width: 90vw;">
+                    <div class="text-sm font-bold text-red-400 mb-3">Confirm Reset</div>
+                    <div class="text-xs text-gray-300 mb-4">{{ memoryConfirmMessage }}</div>
+                    <div class="flex justify-end gap-2">
+                        <button @click="memoryConfirmVisible = false" class="text-xs px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-white">Cancel</button>
+                        <button @click="memoryConfirmAction" class="text-xs px-3 py-1.5 rounded bg-red-700 hover:bg-red-600 text-white">Confirm Reset</button>
+                    </div>
+                </div>
+            </div>
+
         </main>
 
 
@@ -1488,6 +1671,25 @@
                 // Hardening config state
                 const cfgDailyTokenLimit = ref("0")
                 const cfgMaxAutoTier = ref("2")
+
+                // Memory Manager state
+                const memoryPanelVisible = ref(false)
+                const memoryLayers = ref([])
+                const memoryObserver = ref({ enabled: false, observation_count: 0, queue_depth: 0, last_observation: '' })
+                const memoryER1 = ref({ connected: false, synced_count: 0, last_sync: '', url: '' })
+                const memoryExpertise = ref([])
+                const memoryWorkingMemory = ref({ entries: 0, preview: '' })
+                const memoryTotalChunks = ref(0)
+                const memoryMaxChunks = ref(50000)
+                const memoryUsagePercent = computed(() => {
+                    if (memoryMaxChunks.value === 0) return 0
+                    return Math.min(100, Math.round((memoryTotalChunks.value / memoryMaxChunks.value) * 100))
+                })
+                const memoryActionStatus = ref('')
+                const memoryActionOk = ref(true)
+                const memoryConfirmVisible = ref(false)
+                const memoryConfirmMessage = ref('')
+                let memoryConfirmCallback = null
 
                 // Trace enhancements
                 const traceTaskInfo = ref(null)
@@ -2753,6 +2955,90 @@
                     tasksPanelVisible.value = false
                 }
 
+                // Memory Manager methods
+                const loadMemoryStatus = async () => {
+                    try {
+                        const res = await fetch('/api/v1/memory/status')
+                        if (!res.ok) throw new Error('Memory API error')
+                        const data = await res.json()
+                        memoryLayers.value = data.layers || []
+                        memoryObserver.value = data.observer || { enabled: false, observation_count: 0, queue_depth: 0, last_observation: '' }
+                        memoryER1.value = data.er1 || { connected: false, synced_count: 0, last_sync: '', url: '' }
+                        memoryExpertise.value = data.expertise || []
+                        memoryWorkingMemory.value = data.working_memory || { entries: 0, preview: '' }
+                        memoryTotalChunks.value = data.totals?.total_chunks ?? 0
+                        memoryMaxChunks.value = data.totals?.max_chunks ?? 50000
+                    } catch (e) {
+                        console.error('Failed to load memory status', e)
+                    }
+                }
+
+                const toggleMemoryPanel = () => {
+                    memoryPanelVisible.value = !memoryPanelVisible.value
+                    if (memoryPanelVisible.value) loadMemoryStatus()
+                }
+
+                const hideMemoryPanel = () => {
+                    memoryPanelVisible.value = false
+                }
+
+                const memoryResetLayer = (layerName) => {
+                    memoryConfirmMessage.value = layerName === 'all'
+                        ? 'This will delete ALL memory chunks across all layers. This cannot be undone.'
+                        : `This will delete all chunks in the "${layerName}" memory layer. This cannot be undone.`
+                    memoryConfirmCallback = async () => {
+                        try {
+                            const res = await fetch('/api/v1/memory/reset', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ layer: layerName })
+                            })
+                            const data = await res.json()
+                            if (res.ok) {
+                                memoryActionStatus.value = data.message || 'Reset complete'
+                                memoryActionOk.value = true
+                                await loadMemoryStatus()
+                            } else {
+                                memoryActionStatus.value = data.error || 'Reset failed'
+                                memoryActionOk.value = false
+                            }
+                        } catch (e) {
+                            memoryActionStatus.value = 'Network error'
+                            memoryActionOk.value = false
+                        }
+                        setTimeout(() => { memoryActionStatus.value = '' }, 4000)
+                    }
+                    memoryConfirmVisible.value = true
+                }
+
+                const memoryResetAll = () => {
+                    memoryResetLayer('all')
+                }
+
+                const memoryConfirmAction = () => {
+                    memoryConfirmVisible.value = false
+                    if (memoryConfirmCallback) memoryConfirmCallback()
+                }
+
+                const memoryPruneNow = async () => {
+                    try {
+                        const res = await fetch('/api/v1/memory/prune', { method: 'POST' })
+                        const data = await res.json()
+                        if (res.ok) {
+                            memoryActionStatus.value = data.message || 'Pruning complete'
+                            memoryActionOk.value = true
+                            await loadMemoryStatus()
+                        } else {
+                            memoryActionStatus.value = data.error || 'Prune failed'
+                            memoryActionOk.value = false
+                        }
+                    } catch (e) {
+                        memoryActionStatus.value = 'Network error'
+                        memoryActionOk.value = false
+                    }
+                    setTimeout(() => { memoryActionStatus.value = '' }, 4000)
+                }
+
                 // Filtering opacity logic
                 const relatesToSelectedUser = (e) => {
                     if (!selectedUser.value) return true
@@ -3034,7 +3320,7 @@
                 }
                 const bothPanelsVisible = computed(() => identityPanelVisible.value && repoPanelVisible.value)
 
-                return { events, filteredEvents, selectedUser, authFilter, silentMode, toggleSilent, senders, isBot, isTechnical, getDotClass, fetchData, formatTime, getMediaUrl, isDimmed, isImage, isAudio, isDocument, docIcon, docIconClass, docExt, webUsers, selectedWebUserId, newWebUserName, linkJid, webChatMessage, webStatus, systemCopyStatus, forceSend, showTechnical, loadWebUsers, createWebUser, loadWebLink, saveWebLink, unlinkWebLink, sendWebChat, saveForceSend, copyWebChat, copyMessage, copyMessageSystem, reprocessMessage, clipboardOpen, clipboardItems, clipboardSelected, toggleClipboard, selectAllClipboard, clearClipboard, deleteSelectedClipboard, copySelectedClipboard, removeClipboardItem, workRepoPath, loadWorkRepo, saveWorkRepo, pickWorkRepo, repoOptions, selectedRepoPath, defaultWorkRepoPath, activeRepoChoice, repoScanStatus, loadRepoOptions, loadDefaultWorkRepoPath, useSelectedRepo, useDefaultRepo, repoTree, repoFileContent, repoFileDiff, repoDiff, repoStatus, repoStatusError, repoRemoteInfo, repoCommitMessage, repoRemoteUrl, ghAuthStatus, repoBranches, selectedBranch, repoCommits, prTitle, prBody, prBase, prHead, prDraft, repoTab, repoInitialized, repoHealthClass, repoHealthLabel, repoHealthText, repoHealthDot, repoHasRemote, changedFiles, isItemChanged, refreshRepo, refreshAll, loadRepoTree, selectRepoItem, loadRepoStatus, loadRepoDiff, loadRepoLog, loadRepoBranches, checkoutBranch, loadGhAuth, commitRepo, pullRepo, pushRepo, initRepo, createPr, repoActionStatus, repoActionOk, repoActionAt, repoHover, repoHoverStyle, showRepoTooltip, hideRepoTooltip, repoPanelVisible, identityPanelVisible, toggleRepoPanel, toggleIdentityPanel, showRepoPanel, hideRepoPanel, hideIdentityPanel, repoFloating, repoPanel, repoFloatState, startDragRepo, startResizeRepo, toggleRepoFloating, repoPanelEl, identityPanel, identityPanelEl, identityFloating, configOpen, configStatus, configTab, configTabs, cfgBotRepoPath, identityRepoPath, cfgDefaultWorkRepoPath, cfgDefaultRepoSearchPath, cfgKafScaleProxyUrl, cfgAuthFilterDefault, cfgWhatsAppToken, cfgWhatsAppAllowlist, cfgWhatsAppDenylist, cfgWhatsAppPending, approvePending, denyPending, clearPending, openConfig, closeConfig, saveConfig, traceOpen, tracePanelVisible, traceMeta, traceSpans, selectedSpan, traceFloating, tracePanel, tracePanelEl, openTrace, hideTracePanel, toggleTracePanel, startDragTrace, startResizeTrace, toggleTraceFloating, spanTypeColorHex, bothPanelsVisible, idRepoTree, idRepoFileContent, idRepoFileDiff, idRepoDiff, idRepoStatus, idRepoStatusError, idRepoRemoteInfo, idRepoCommitMessage, idRepoRemoteUrl, idGhAuthStatus, idRepoBranches, idSelectedBranch, idRepoCommits, idPrTitle, idPrBody, idPrBase, idPrHead, idPrDraft, idRepoTab, idRepoActionStatus, idRepoActionOk, idRepoActionAt, idRepoInitialized, idRepoHealthClass, idRepoHealthLabel, idRepoHealthText, idRepoHealthDot, idRepoHasRemote, idChangedFiles, isIdItemChanged, refreshIdentity, loadIdRepoTree, selectIdRepoItem, loadIdRepoStatus, loadIdRepoDiff, loadIdRepoLog, loadIdRepoBranches, checkoutIdBranch, loadIdGhAuth, commitIdRepo, pullIdRepo, pushIdRepo, initIdRepo, createIdPr, tasksPanelVisible, tasksList, selectedTask, tasksFilterStatus, tasksFilterChannel, loadTasks, toggleTasksPanel, hideTasksPanel, cfgDailyTokenLimit, cfgMaxAutoTier, traceTaskInfo, tracePolicyDecisions, traceJsonCopied, copyTraceJson, traceViewMode, traceGraphSvg, groupPanelVisible, groupStatus, groupMembers, renderTraceGraph, loadGroupStatus, loadGroupMembers, toggleGroupPanel, switchMode, appMode }
+                return { events, filteredEvents, selectedUser, authFilter, silentMode, toggleSilent, senders, isBot, isTechnical, getDotClass, fetchData, formatTime, getMediaUrl, isDimmed, isImage, isAudio, isDocument, docIcon, docIconClass, docExt, webUsers, selectedWebUserId, newWebUserName, linkJid, webChatMessage, webStatus, systemCopyStatus, forceSend, showTechnical, loadWebUsers, createWebUser, loadWebLink, saveWebLink, unlinkWebLink, sendWebChat, saveForceSend, copyWebChat, copyMessage, copyMessageSystem, reprocessMessage, clipboardOpen, clipboardItems, clipboardSelected, toggleClipboard, selectAllClipboard, clearClipboard, deleteSelectedClipboard, copySelectedClipboard, removeClipboardItem, workRepoPath, loadWorkRepo, saveWorkRepo, pickWorkRepo, repoOptions, selectedRepoPath, defaultWorkRepoPath, activeRepoChoice, repoScanStatus, loadRepoOptions, loadDefaultWorkRepoPath, useSelectedRepo, useDefaultRepo, repoTree, repoFileContent, repoFileDiff, repoDiff, repoStatus, repoStatusError, repoRemoteInfo, repoCommitMessage, repoRemoteUrl, ghAuthStatus, repoBranches, selectedBranch, repoCommits, prTitle, prBody, prBase, prHead, prDraft, repoTab, repoInitialized, repoHealthClass, repoHealthLabel, repoHealthText, repoHealthDot, repoHasRemote, changedFiles, isItemChanged, refreshRepo, refreshAll, loadRepoTree, selectRepoItem, loadRepoStatus, loadRepoDiff, loadRepoLog, loadRepoBranches, checkoutBranch, loadGhAuth, commitRepo, pullRepo, pushRepo, initRepo, createPr, repoActionStatus, repoActionOk, repoActionAt, repoHover, repoHoverStyle, showRepoTooltip, hideRepoTooltip, repoPanelVisible, identityPanelVisible, toggleRepoPanel, toggleIdentityPanel, showRepoPanel, hideRepoPanel, hideIdentityPanel, repoFloating, repoPanel, repoFloatState, startDragRepo, startResizeRepo, toggleRepoFloating, repoPanelEl, identityPanel, identityPanelEl, identityFloating, configOpen, configStatus, configTab, configTabs, cfgBotRepoPath, identityRepoPath, cfgDefaultWorkRepoPath, cfgDefaultRepoSearchPath, cfgKafScaleProxyUrl, cfgAuthFilterDefault, cfgWhatsAppToken, cfgWhatsAppAllowlist, cfgWhatsAppDenylist, cfgWhatsAppPending, approvePending, denyPending, clearPending, openConfig, closeConfig, saveConfig, traceOpen, tracePanelVisible, traceMeta, traceSpans, selectedSpan, traceFloating, tracePanel, tracePanelEl, openTrace, hideTracePanel, toggleTracePanel, startDragTrace, startResizeTrace, toggleTraceFloating, spanTypeColorHex, bothPanelsVisible, idRepoTree, idRepoFileContent, idRepoFileDiff, idRepoDiff, idRepoStatus, idRepoStatusError, idRepoRemoteInfo, idRepoCommitMessage, idRepoRemoteUrl, idGhAuthStatus, idRepoBranches, idSelectedBranch, idRepoCommits, idPrTitle, idPrBody, idPrBase, idPrHead, idPrDraft, idRepoTab, idRepoActionStatus, idRepoActionOk, idRepoActionAt, idRepoInitialized, idRepoHealthClass, idRepoHealthLabel, idRepoHealthText, idRepoHealthDot, idRepoHasRemote, idChangedFiles, isIdItemChanged, refreshIdentity, loadIdRepoTree, selectIdRepoItem, loadIdRepoStatus, loadIdRepoDiff, loadIdRepoLog, loadIdRepoBranches, checkoutIdBranch, loadIdGhAuth, commitIdRepo, pullIdRepo, pushIdRepo, initIdRepo, createIdPr, tasksPanelVisible, tasksList, selectedTask, tasksFilterStatus, tasksFilterChannel, loadTasks, toggleTasksPanel, hideTasksPanel, cfgDailyTokenLimit, cfgMaxAutoTier, traceTaskInfo, tracePolicyDecisions, traceJsonCopied, copyTraceJson, traceViewMode, traceGraphSvg, groupPanelVisible, groupStatus, groupMembers, renderTraceGraph, loadGroupStatus, loadGroupMembers, toggleGroupPanel, switchMode, appMode, memoryPanelVisible, memoryLayers, memoryObserver, memoryER1, memoryExpertise, memoryWorkingMemory, memoryTotalChunks, memoryMaxChunks, memoryUsagePercent, memoryActionStatus, memoryActionOk, memoryConfirmVisible, memoryConfirmMessage, loadMemoryStatus, toggleMemoryPanel, hideMemoryPanel, memoryResetLayer, memoryResetAll, memoryConfirmAction, memoryPruneNow }
             }
         })
         app.component('github-panel', GithubPanel)
