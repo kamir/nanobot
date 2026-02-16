@@ -251,10 +251,10 @@ func (c *ER1Client) SyncLoop(ctx context.Context) {
 
 // ER1Status holds the current status of the ER1 client.
 type ER1Status struct {
-	Connected  bool      `json:"connected"`
-	LastSync   time.Time `json:"last_sync"`
-	SyncedCount int      `json:"synced_count"`
-	URL        string    `json:"url"`
+	Connected   bool      `json:"connected"`
+	LastSync    time.Time `json:"last_sync"`
+	SyncedCount int       `json:"synced_count"`
+	URL         string    `json:"url"`
 }
 
 // Status returns the current ER1 client status.

@@ -4,7 +4,6 @@ import { useRouter } from 'vue-router'
 import { useModeStore } from './stores/mode'
 import ConnectionStatus from './components/ConnectionStatus.vue'
 import SidecarStatus from './components/SidecarStatus.vue'
-import MemoryStatusLed from './components/MemoryStatusLed.vue'
 
 const router = useRouter()
 const modeStore = useModeStore()
@@ -23,13 +22,11 @@ onMounted(async () => {
       <div class="header-left">
         <span class="logo">GoMikroBot</span>
         <span class="mode-badge">{{ modeStore.modeLabel }}</span>
-        <MemoryStatusLed />
       </div>
       <nav class="header-nav">
         <router-link to="/dashboard">Dashboard</router-link>
         <router-link to="/orchestrator" v-if="modeStore.currentMode === 'full'">Orchestrator</router-link>
         <router-link to="/remote" v-if="modeStore.currentMode === 'remote'">Remote</router-link>
-        <router-link to="/memory">Memory</router-link>
         <router-link to="/settings">Settings</router-link>
       </nav>
       <div class="header-right">

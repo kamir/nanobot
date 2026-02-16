@@ -26,11 +26,6 @@ const routes = [
     component: () => import('../views/RemoteConnect.vue'),
   },
   {
-    path: '/memory',
-    name: 'Memory',
-    component: () => import('../views/Memory.vue'),
-  },
-  {
     path: '/settings',
     name: 'Settings',
     component: () => import('../views/Settings.vue'),
