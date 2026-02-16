@@ -92,6 +92,27 @@ func (m *MemoryService) Search(ctx context.Context, query string, limit int) ([]
 	return chunks, nil
 }
 
+// SearchBySource searches memory filtered by source prefix.
+// Results are post-filtered to only include chunks matching sourcePrefix.
+func (m *MemoryService) SearchBySource(ctx context.Context, query string, sourcePrefix string, limit int) ([]MemoryChunk, error) {
+	// Search broadly, then filter by source
+	results, err := m.Search(ctx, query, limit*3) // over-fetch to compensate for filtering
+	if err != nil {
+		return nil, err
+	}
+
+	var filtered []MemoryChunk
+	for _, c := range results {
+		if strings.HasPrefix(c.Source, sourcePrefix) {
+			filtered = append(filtered, c)
+			if len(filtered) >= limit {
+				break
+			}
+		}
+	}
+	return filtered, nil
+}
+
 // chunkID generates a deterministic ID from source and content.
 func chunkID(source, content string) string {
 	h := sha256.Sum256([]byte(source + ":" + content))

@@ -5,10 +5,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/kamir/gomikrobot/internal/timeline"
 )
+
+// MemoryIndexer is an optional interface for indexing received group items
+// into the local semantic memory. Avoids import cycle with memory package.
+type MemoryIndexer interface {
+	Store(ctx context.Context, content, source, tags string) (string, error)
+}
 
 // MemoryItem is a knowledge artifact stored in S3 via LFS and shared on the memory topic.
 type MemoryItem struct {
@@ -151,6 +158,15 @@ func (m *Manager) HandleMemoryItem(env *GroupEnvelope) {
 			LFSKey:      key,
 			Metadata:    string(metaJSON),
 		})
+	}
+
+	// Index into local semantic memory for RAG retrieval
+	if m.memoryIdx != nil && item.Title != "" {
+		source := fmt.Sprintf("group:%s:%s", item.AuthorID, item.ItemID)
+		tags := strings.Join(item.Tags, ",")
+		if _, err := m.memoryIdx.Store(context.Background(), item.Title, source, tags); err != nil {
+			slog.Debug("Failed to index group memory item", "item_id", item.ItemID, "error", err)
+		}
 	}
 }
 

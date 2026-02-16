@@ -31,18 +31,20 @@ type GroupTracePublisher interface {
 
 // LoopOptions contains configuration for the agent loop.
 type LoopOptions struct {
-	Bus            *bus.MessageBus
-	Provider       provider.LLMProvider
-	Timeline       *timeline.TimelineService
-	Policy         policy.Engine
-	MemoryService  *memory.MemoryService
-	GroupPublisher GroupTracePublisher
-	Workspace      string
-	WorkRepo       string
-	SystemRepo     string
-	WorkRepoGetter func() string
-	Model          string
-	MaxIterations  int
+	Bus              *bus.MessageBus
+	Provider         provider.LLMProvider
+	Timeline         *timeline.TimelineService
+	Policy           policy.Engine
+	MemoryService    *memory.MemoryService
+	AutoIndexer      *memory.AutoIndexer
+	ExpertiseTracker *memory.ExpertiseTracker
+	GroupPublisher   GroupTracePublisher
+	Workspace        string
+	WorkRepo         string
+	SystemRepo       string
+	WorkRepoGetter   func() string
+	Model            string
+	MaxIterations    int
 }
 
 // Loop is the core agent processing engine.
@@ -51,8 +53,10 @@ type Loop struct {
 	provider       provider.LLMProvider
 	timeline       *timeline.TimelineService
 	policy         policy.Engine
-	memoryService  *memory.MemoryService
-	groupPublisher GroupTracePublisher
+	memoryService    *memory.MemoryService
+	autoIndexer      *memory.AutoIndexer
+	expertiseTracker *memory.ExpertiseTracker
+	groupPublisher   GroupTracePublisher
 	approvalMgr    *approval.Manager
 	registry       *tools.Registry
 	sessions       *session.Manager
@@ -91,8 +95,10 @@ func NewLoop(opts LoopOptions) *Loop {
 		provider:       opts.Provider,
 		timeline:       opts.Timeline,
 		policy:         opts.Policy,
-		memoryService:  opts.MemoryService,
-		groupPublisher: opts.GroupPublisher,
+		memoryService:    opts.MemoryService,
+		autoIndexer:      opts.AutoIndexer,
+		expertiseTracker: opts.ExpertiseTracker,
+		groupPublisher:   opts.GroupPublisher,
 		approvalMgr:    approval.NewManager(opts.Timeline),
 		registry:       registry,
 		sessions:       session.NewManager(opts.Workspace),
@@ -254,6 +260,11 @@ func (l *Loop) ProcessDirectWithTrace(ctx context.Context, content, sessionKey, 
 	// Save session with response
 	sess.AddMessage("assistant", response)
 	l.sessions.Save(sess)
+
+	// Auto-index conversation pair into semantic memory
+	if l.autoIndexer != nil {
+		l.autoIndexer.Enqueue(memory.FormatConversationPair(content, response, channel, chatID))
+	}
 
 	return response, nil
 }
@@ -1103,6 +1114,15 @@ func (l *Loop) runAgentLoop(ctx context.Context, messages []provider.Message) (s
 			if strings.Contains(result, "Ey, du spinnst wohl? Hä?") {
 				return "Ey, du spinnst wohl? Hä? 💣 👮‍♂️ 🔒", nil
 			}
+
+			// Auto-index substantive tool results
+			if l.autoIndexer != nil && err == nil && len(result) > 200 {
+				item := memory.FormatToolResult(tc.Name, tc.Arguments, result)
+				l.autoIndexer.Enqueue(item)
+			}
+
+			// Track tool expertise
+			l.expertiseTracker.RecordToolUse(tc.Name, l.activeTaskID, toolDuration.Milliseconds(), err == nil)
 
 			// Add tool result
 			messages = append(messages, provider.Message{

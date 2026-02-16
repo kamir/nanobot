@@ -317,6 +317,73 @@ func (b *ContextBuilder) BuildIdentityEnvelope(agentID, agentName, model string)
 	}
 }
 
+// TaskAssessment holds the result of assessing an incoming message.
+type TaskAssessment struct {
+	Category      string // "quick-answer", "tool-heavy", "multi-step", "creative", "security"
+	CognitiveMode string // "convergent", "divergent", "critical", "systems", "adaptive"
+}
+
+// AssessTask performs a lightweight classification of the incoming message
+// to route to the appropriate handling strategy and cognitive mode.
+func AssessTask(message string) TaskAssessment {
+	lower := strings.ToLower(message)
+
+	// Security-sensitive requests
+	securityKeywords := []string{"password", "key", "secret", "credential", "auth", "permission", "security", "encrypt"}
+	for _, kw := range securityKeywords {
+		if strings.Contains(lower, kw) {
+			return TaskAssessment{Category: "security", CognitiveMode: "critical"}
+		}
+	}
+
+	// Creative/brainstorming requests
+	creativeKeywords := []string{"brainstorm", "idea", "suggest", "creative", "design", "propose", "imagine"}
+	for _, kw := range creativeKeywords {
+		if strings.Contains(lower, kw) {
+			return TaskAssessment{Category: "creative", CognitiveMode: "divergent"}
+		}
+	}
+
+	// Architecture/system-level requests
+	archKeywords := []string{"architect", "system", "infrastructure", "refactor", "redesign", "migration", "plan"}
+	for _, kw := range archKeywords {
+		if strings.Contains(lower, kw) {
+			return TaskAssessment{Category: "multi-step", CognitiveMode: "systems"}
+		}
+	}
+
+	// Bug fix / precise requests
+	fixKeywords := []string{"fix", "bug", "error", "broken", "fail", "crash", "debug"}
+	for _, kw := range fixKeywords {
+		if strings.Contains(lower, kw) {
+			return TaskAssessment{Category: "tool-heavy", CognitiveMode: "convergent"}
+		}
+	}
+
+	// Short messages are likely quick-answer
+	if len(message) < 50 {
+		return TaskAssessment{Category: "quick-answer", CognitiveMode: "adaptive"}
+	}
+
+	return TaskAssessment{Category: "multi-step", CognitiveMode: "adaptive"}
+}
+
+// cognitivePromptHint returns a system prompt hint for the given cognitive mode.
+func cognitivePromptHint(mode string) string {
+	switch mode {
+	case "convergent":
+		return "\n\n## Cognitive Mode: Convergent\nFocus on the specific problem. Be systematic, precise, and thorough. Verify your solution step by step."
+	case "divergent":
+		return "\n\n## Cognitive Mode: Divergent\nExplore multiple possibilities. Be creative and consider unconventional approaches. Present options."
+	case "critical":
+		return "\n\n## Cognitive Mode: Critical\nAnalyze carefully. Question assumptions. Check edge cases and security implications. Be thorough in your review."
+	case "systems":
+		return "\n\n## Cognitive Mode: Systems\nThink holistically. Consider connections, dependencies, and architectural implications. Look at the bigger picture."
+	default:
+		return "" // adaptive = no special hint
+	}
+}
+
 // BuildMessages constructs the message list for the LLM.
 func (b *ContextBuilder) BuildMessages(
 	sess *session.Session,
@@ -338,6 +405,12 @@ func (b *ContextBuilder) BuildMessages(
 		systemPrompt += "\n\n## Request Context\nThis is an INTERNAL message from the bot owner. Treat as command/reflection. Full tool access. Respond concisely and directly. You may access system internals."
 	case "external":
 		systemPrompt += "\n\n## Request Context\nThis is an EXTERNAL request from an authorized user. Be helpful and professional. Do NOT expose system internals (paths, configs, keys). Prefer read-only operations. Tool access may be restricted by policy."
+	}
+
+	// Inject cognitive mode based on task assessment
+	assessment := AssessTask(currentMessage)
+	if hint := cognitivePromptHint(assessment.CognitiveMode); hint != "" {
+		systemPrompt += hint
 	}
 
 	messages := []provider.Message{

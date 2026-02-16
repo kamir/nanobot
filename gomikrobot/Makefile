@@ -3,7 +3,7 @@ SHELL := /bin/zsh
 SOURCE_ENV := source $$HOME/.zshrc &&
 
 .PHONY: help build run rerun test test-classification install \
-	release release-major release-minor release-patch \
+	release release-major release-minor release-patch dist-go \
 	docker-build docker-up docker-down docker-logs \
 	run-standalone run-full run-headless \
 	electron-setup electron-dev electron-build electron-start electron-restart electron-dist \
@@ -125,22 +125,28 @@ electron-dist-linux: electron-build ## Package Electron .AppImage for Linux
 	cd electron && npm run dist:linux
 
 # ---------------------------------------------------------------------------
-# Releases
+# Releases — `make release-patch` bumps, commits, tags, pushes → CI builds
 # ---------------------------------------------------------------------------
 
-release: release-major ## Bump major version and build
+release: release-patch ## Default: bump patch and release
 
-release-major: ## Bump major version and build
+release-major: ## Bump major version, commit, tag, push → triggers CI release
 	@bash ./scripts/release.sh major
-	$(MAKE) build
 
-release-minor: ## Bump minor version and build
+release-minor: ## Bump minor version, commit, tag, push → triggers CI release
 	@bash ./scripts/release.sh minor
-	$(MAKE) build
 
-release-patch: ## Bump patch version and build
+release-patch: ## Bump patch version, commit, tag, push → triggers CI release
 	@bash ./scripts/release.sh patch
-	$(MAKE) build
+
+dist-go: ## Cross-compile Go binaries locally (all platforms)
+	@mkdir -p dist
+	GOOS=darwin  GOARCH=arm64 go build -o dist/gomikrobot-darwin-arm64  ./cmd/gomikrobot
+	GOOS=darwin  GOARCH=amd64 go build -o dist/gomikrobot-darwin-amd64  ./cmd/gomikrobot
+	GOOS=linux   GOARCH=amd64 go build -o dist/gomikrobot-linux-amd64   ./cmd/gomikrobot
+	GOOS=linux   GOARCH=arm64 go build -o dist/gomikrobot-linux-arm64   ./cmd/gomikrobot
+	@echo "Built 4 binaries in dist/"
+	@ls -lh dist/gomikrobot-*
 
 # ---------------------------------------------------------------------------
 # Docker

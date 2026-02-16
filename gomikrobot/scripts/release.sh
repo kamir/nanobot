@@ -46,6 +46,13 @@ perl -0777 -i -pe "s/version = \\\"$CURRENT\\\"/version = \\\"$NEXT\\\"/g" "$ROO
 
 echo "Version bumped: $CURRENT -> $NEXT"
 
+# Sync Electron app version
+ELECTRON_PKG="${ROOT_DIR}/electron/package.json"
+if [[ -f "$ELECTRON_PKG" ]]; then
+  perl -i -pe "s/\"version\": \"[0-9]+\.[0-9]+\.[0-9]+\"/\"version\": \"$NEXT\"/" "$ELECTRON_PKG"
+  echo "Electron version synced to $NEXT"
+fi
+
 git -C "$GIT_ROOT" add -A
 git commit -m "Release v$NEXT"
 git tag "v$NEXT"

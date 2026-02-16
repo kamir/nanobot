@@ -24,6 +24,7 @@ type Manager struct {
 	topicMgr  *TopicManager
 	roster    map[string]*GroupMember
 	rosterMu  sync.RWMutex
+	memoryIdx MemoryIndexer
 	active    bool
 	activeMu  sync.RWMutex
 	cancelHB  context.CancelFunc
@@ -46,6 +47,11 @@ func NewManager(cfg config.GroupConfig, timeSvc *timeline.TimelineService, ident
 		topicMgr:  topicMgr,
 		roster:    make(map[string]*GroupMember),
 	}
+}
+
+// SetMemoryIndexer sets an optional local memory indexer for group items.
+func (m *Manager) SetMemoryIndexer(idx MemoryIndexer) {
+	m.memoryIdx = idx
 }
 
 // Join announces this agent to the group and starts heartbeat.

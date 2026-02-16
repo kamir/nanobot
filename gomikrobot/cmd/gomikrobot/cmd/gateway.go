@@ -169,7 +169,12 @@ func runGateway(cmd *cobra.Command, args []string) {
 		if cfg.Channels.Discord.Enabled {
 			identity.Channels = append(identity.Channels, "discord")
 		}
-		return group.NewManager(grpCfg, timeSvc, identity)
+		mgr := group.NewManager(grpCfg, timeSvc, identity)
+		// Bridge group memory items into local vector store for RAG
+		if memorySvc != nil {
+			mgr.SetMemoryIndexer(memorySvc)
+		}
+		return mgr
 	}
 
 	// Helper: start Kafka consumer + router, returns cancel func
@@ -238,14 +243,31 @@ func runGateway(cmd *cobra.Command, args []string) {
 
 	gatewayStartTime := time.Now()
 
-	// 5. Setup Loop
+	// 5. Setup Auto-Indexer (background memory indexing)
+	var autoIndexer *memory.AutoIndexer
+	if memorySvc != nil {
+		autoIndexer = memory.NewAutoIndexer(memorySvc, memory.AutoIndexerConfig{
+			MinLength:     100,
+			BatchSize:     5,
+			FlushInterval: 30 * time.Second,
+		})
+		fmt.Println("📝 Auto-indexer initialized")
+	}
+
+	// 5a. Setup Expertise Tracker
+	expertiseTracker := memory.NewExpertiseTracker(timeSvc.DB())
+	fmt.Println("🎯 Expertise tracker initialized")
+
+	// 5b. Setup Loop
 	loop := agent.NewLoop(agent.LoopOptions{
 		Bus:            msgBus,
 		Provider:       prov,
 		Timeline:       timeSvc,
 		Policy:         policyEngine,
-		MemoryService:  memorySvc,
-		GroupPublisher: groupPublisher,
+		MemoryService:    memorySvc,
+		AutoIndexer:      autoIndexer,
+		ExpertiseTracker: expertiseTracker,
+		GroupPublisher:   groupPublisher,
 		Workspace:      cfg.Paths.Workspace,
 		WorkRepo:       workRepoPath,
 		SystemRepo:     systemRepoPath,
@@ -275,6 +297,29 @@ func runGateway(cmd *cobra.Command, args []string) {
 	// Handle signals
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Start Auto-Indexer
+	if autoIndexer != nil {
+		go autoIndexer.Run(ctx)
+	}
+
+	// Start Memory Lifecycle Manager (daily pruning)
+	lifecycleMgr := memory.NewLifecycleManager(timeSvc.DB(), memory.LifecycleConfig{})
+	go func() {
+		// Run once at startup
+		lifecycleMgr.RunDaily()
+		// Then daily
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				lifecycleMgr.RunDaily()
+			}
+		}
+	}()
 
 	// Start Channels
 	if err := wa.Start(ctx); err != nil {

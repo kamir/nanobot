@@ -627,4 +627,27 @@ CREATE TABLE IF NOT EXISTS topic_message_log (
 CREATE INDEX IF NOT EXISTS idx_topic_log_topic ON topic_message_log(topic_name);
 CREATE INDEX IF NOT EXISTS idx_topic_log_sender ON topic_message_log(sender_id);
 CREATE INDEX IF NOT EXISTS idx_topic_log_created ON topic_message_log(created_at);
+
+CREATE TABLE IF NOT EXISTS agent_expertise (
+	skill_name TEXT PRIMARY KEY,
+	success_count INTEGER NOT NULL DEFAULT 0,
+	failure_count INTEGER NOT NULL DEFAULT 0,
+	avg_quality REAL NOT NULL DEFAULT 0.0,
+	last_used DATETIME,
+	total_duration_ms INTEGER NOT NULL DEFAULT 0,
+	trend TEXT NOT NULL DEFAULT 'stable'
+);
+
+CREATE TABLE IF NOT EXISTS skill_events (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	skill_name TEXT NOT NULL,
+	task_id TEXT,
+	action TEXT NOT NULL,
+	quality REAL NOT NULL DEFAULT 0.5,
+	duration_ms INTEGER NOT NULL DEFAULT 0,
+	metadata TEXT DEFAULT '{}',
+	created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_skill_events_skill ON skill_events(skill_name);
+CREATE INDEX IF NOT EXISTS idx_skill_events_created ON skill_events(created_at);
 `
