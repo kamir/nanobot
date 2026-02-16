@@ -8,9 +8,9 @@ The name reflects what it does: **Kaf**ka as the backbone, **Claw** as the grip 
 
 ---
 
-## Core Ideas
+## Core Contributions
 
-### 1. Enterprise-Ready Agent Communication via Kafka
+### 1. Enterprise-Ready Agent Communication via Kafka Protocol 
 
 Agents communicate through a structured Kafka topic hierarchy. Every message flows through typed envelopes (`announce`, `request`, `response`, `trace`, `memory`, `audit`) with correlation IDs and timestamps, giving full observability out of the box.
 
@@ -83,7 +83,7 @@ The learning loop: Agent A discovers something, shares it as a memory item, Agen
 ## Architecture
 
 ```
-                         ┌─────────────────────────────────┐
+                         ┌──────────────────────────────────┐
                          │           Apache Kafka           │
                          │                                  │
                          │  control ─ tasks ─ observe       │
