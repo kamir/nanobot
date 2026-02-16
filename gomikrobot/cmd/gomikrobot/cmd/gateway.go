@@ -215,8 +215,8 @@ func runGateway(cmd *cobra.Command, args []string) {
 		mgr := buildGrpManager(cfg.Group)
 		grpState.SetManager(mgr, nil)
 		fmt.Println("🤝 Group collaboration enabled:", cfg.Group.GroupName)
-	} else {
-		// Check if group was activated via settings
+	} else if cfg.Orchestrator.Enabled || cfg.Gateway.Host == "0.0.0.0" {
+		// Non-standalone: allow auto-rejoin from DB
 		if active, err := timeSvc.GetSetting("group_active"); err == nil && active == "true" {
 			if gn, err := timeSvc.GetSetting("group_name"); err == nil && gn != "" {
 				cfg.Group.GroupName = gn
@@ -226,6 +226,63 @@ func runGateway(cmd *cobra.Command, args []string) {
 				fmt.Println("🤝 Group collaboration restored from settings:", cfg.Group.GroupName)
 			}
 		}
+	} else {
+		fmt.Println("🖥️  Standalone Desktop mode: skipping group auto-rejoin")
+	}
+
+	// --- Shared mode variable (used by all handlers) ---
+	var modeMu sync.RWMutex
+	currentMode := "standalone"
+
+	getMode := func() string {
+		modeMu.RLock()
+		defer modeMu.RUnlock()
+		return currentMode
+	}
+
+	recalcMode := func() {
+		modeMu.Lock()
+		defer modeMu.Unlock()
+		currentMode = "standalone"
+		if cfg.Group.Enabled && cfg.Orchestrator.Enabled {
+			currentMode = "full"
+		} else if cfg.Group.Enabled {
+			currentMode = "group"
+		}
+		if cfg.Gateway.Host == "0.0.0.0" {
+			currentMode = "headless"
+		}
+	}
+	recalcMode()
+
+	// Audit: log mode at startup
+	if getMode() == "standalone" {
+		_ = timeSvc.AddEvent(&timeline.TimelineEvent{
+			EventID:        fmt.Sprintf("MODE_STANDALONE_%d", time.Now().UnixNano()),
+			Timestamp:      time.Now(),
+			SenderID:       "system",
+			SenderName:     "GoMikroBot",
+			EventType:      "SYSTEM",
+			ContentText:    "Entered Standalone Desktop mode",
+			Classification: "MODE_CHANGE",
+			Authorized:     true,
+			Metadata:       `{"mode":"standalone","event":"ENTER_STANDALONE"}`,
+		})
+		_ = timeSvc.SetSetting("current_mode", "standalone")
+		fmt.Println("🖥️  Standalone Desktop mode active — group features disabled")
+	}
+
+	// Helper: block mutating group endpoints in standalone mode
+	isStandaloneBlocked := func(w http.ResponseWriter) bool {
+		if getMode() == "standalone" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "group operations are disabled in standalone mode",
+			})
+			return true
+		}
+		return false
 	}
 
 	// Build group publisher for the loop (nil-safe)
@@ -559,15 +616,7 @@ func runGateway(cmd *cobra.Command, args []string) {
 				agentID = fmt.Sprintf("gomikrobot-%s", hostname)
 			}
 
-			mode := "standalone"
-			if cfg.Group.Enabled && cfg.Orchestrator.Enabled {
-				mode = "full"
-			} else if cfg.Group.Enabled {
-				mode = "group"
-			}
-			if cfg.Gateway.Host == "0.0.0.0" {
-				mode = "headless"
-			}
+			mode := getMode()
 
 			orchEnabled := false
 			if orch != nil {
@@ -950,6 +999,9 @@ func runGateway(cmd *cobra.Command, args []string) {
 			if r.Method == "OPTIONS" {
 				return
 			}
+			if isStandaloneBlocked(w) {
+				return
+			}
 			if r.Method != "POST" {
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 				return
@@ -1013,6 +1065,8 @@ func runGateway(cmd *cobra.Command, args []string) {
 				_ = timeSvc.SetSetting("kafscale_lfs_proxy_url", body.LFSProxyURL)
 			}
 
+			cfg.Group.Enabled = true
+			recalcMode()
 			json.NewEncoder(w).Encode(mgr.Status())
 		})
 
@@ -1023,6 +1077,9 @@ func runGateway(cmd *cobra.Command, args []string) {
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 			w.Header().Set("Content-Type", "application/json")
 			if r.Method == "OPTIONS" {
+				return
+			}
+			if isStandaloneBlocked(w) {
 				return
 			}
 			if r.Method != "POST" {
@@ -1045,6 +1102,8 @@ func runGateway(cmd *cobra.Command, args []string) {
 
 			grpState.Clear()
 			_ = timeSvc.SetSetting("group_active", "false")
+			cfg.Group.Enabled = false
+			recalcMode()
 
 			json.NewEncoder(w).Encode(map[string]string{"status": "left"})
 		})
@@ -1056,6 +1115,9 @@ func runGateway(cmd *cobra.Command, args []string) {
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 			w.Header().Set("Content-Type", "application/json")
 			if r.Method == "OPTIONS" {
+				return
+			}
+			if r.Method == "POST" && isStandaloneBlocked(w) {
 				return
 			}
 
@@ -1133,6 +1195,9 @@ func runGateway(cmd *cobra.Command, args []string) {
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 			w.Header().Set("Content-Type", "application/json")
 			if r.Method == "OPTIONS" {
+				return
+			}
+			if isStandaloneBlocked(w) {
 				return
 			}
 			if r.Method != "POST" {
@@ -1236,6 +1301,9 @@ func runGateway(cmd *cobra.Command, args []string) {
 			if r.Method == "OPTIONS" {
 				return
 			}
+			if r.Method == "POST" && isStandaloneBlocked(w) {
+				return
+			}
 
 			if r.Method == "POST" {
 				mgr := grpState.Manager()
@@ -1292,6 +1360,9 @@ func runGateway(cmd *cobra.Command, args []string) {
 			if r.Method == "OPTIONS" {
 				return
 			}
+			if r.Method == "POST" && isStandaloneBlocked(w) {
+				return
+			}
 
 			if r.Method == "POST" {
 				mgr := grpState.Manager()
@@ -1345,6 +1416,9 @@ func runGateway(cmd *cobra.Command, args []string) {
 			if r.Method == "OPTIONS" {
 				return
 			}
+			if isStandaloneBlocked(w) {
+				return
+			}
 			if r.Method != "POST" {
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 				return
@@ -1385,6 +1459,9 @@ func runGateway(cmd *cobra.Command, args []string) {
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 			w.Header().Set("Content-Type", "application/json")
 			if r.Method == "OPTIONS" {
+				return
+			}
+			if isStandaloneBlocked(w) {
 				return
 			}
 			if r.Method != "POST" {
@@ -1452,6 +1529,9 @@ func runGateway(cmd *cobra.Command, args []string) {
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 			w.Header().Set("Content-Type", "application/json")
 			if r.Method == "OPTIONS" {
+				return
+			}
+			if isStandaloneBlocked(w) {
 				return
 			}
 			if r.Method != "POST" {
@@ -1727,6 +1807,9 @@ func runGateway(cmd *cobra.Command, args []string) {
 			w.Header().Set("Content-Type", "application/json")
 
 			if r.Method == "OPTIONS" {
+				return
+			}
+			if isStandaloneBlocked(w) {
 				return
 			}
 			if r.Method != "POST" {
@@ -2964,8 +3047,12 @@ func runGateway(cmd *cobra.Command, args []string) {
 			http.ServeFile(w, r, "web/timeline.html")
 		})
 
-		// SPA: Group Management
+		// SPA: Group Management (blocked in standalone mode)
 		mux.HandleFunc("/group", func(w http.ResponseWriter, r *http.Request) {
+			if getMode() == "standalone" {
+				http.Redirect(w, r, "/timeline", http.StatusTemporaryRedirect)
+				return
+			}
 			http.ServeFile(w, r, "web/group.html")
 		})
 

@@ -1311,6 +1311,14 @@ func (s *TimelineService) ListUnifiedAudit(filter AuditFilter) ([]UnifiedAuditEn
 		COALESCE(arguments,'') as details, created_at
 		FROM approval_requests`
 
+	query += ` UNION ALL `
+
+	// mode_change events from timeline
+	query += `SELECT id, 'mode_change' as source, classification as event_type,
+		0 as tier, sender_id as agent_id, '' as target_id,
+		content_text as details, timestamp as created_at
+		FROM timeline WHERE classification = 'MODE_CHANGE'`
+
 	query += `) AS unified WHERE 1=1`
 	args := []any{}
 

@@ -248,6 +248,15 @@
 <body class="h-screen flex flex-col overflow-hidden">
     <div id="app" v-cloak class="flex flex-col h-full">
 
+        <!-- Standalone mode block -->
+        <div v-if="standaloneBlocked" class="flex items-center justify-center min-h-screen">
+            <div class="glass rounded-xl p-8 text-center max-w-md">
+                <div class="text-xl font-bold text-amber-400 mb-3">STANDALONE MODE</div>
+                <p class="text-gray-400 text-xs mb-4">Group management is not available in Standalone Desktop mode.</p>
+                <a href="/timeline" class="inline-block px-4 py-2 rounded-lg bg-amber-500/20 text-amber-400 text-xs font-bold hover:bg-amber-500/30 transition-colors">Back to Timeline</a>
+            </div>
+        </div>
+
         <!-- Header -->
         <header class="glass z-10 shadow-lg border-b border-gray-800/50">
             <div class="px-6 py-3 flex items-center justify-between">
@@ -1463,6 +1472,7 @@
             const joinError = ref('')
             const quickJoinName = ref('')
             const toast = ref(null)
+            const standaloneBlocked = ref(false)
             const expandedTasks = reactive({})
             const expandedTraces = reactive({})
 
@@ -2208,6 +2218,14 @@
             watch([taskFilter, taskStatusFilter], () => loadTasks())
 
             onMounted(async () => {
+                try {
+                    const sr = await fetch('/api/v1/status')
+                    const sd = await sr.json()
+                    if (sd.mode === 'standalone') {
+                        standaloneBlocked.value = true
+                        return
+                    }
+                } catch(e) {}
                 await loadAll()
                 await loadConfig()
                 // Poll every 10s
@@ -2224,7 +2242,7 @@
             })
 
             return {
-                tabs, activeTab,
+                tabs, activeTab, standaloneBlocked,
                 status, members, tasks, traces, config, groupActive,
                 stats, previousMembers, membershipHistory,
                 auditEntries, auditSourceFilter, auditAgentFilter, filteredAuditEntries,
