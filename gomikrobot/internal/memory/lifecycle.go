@@ -161,6 +161,33 @@ type MemoryStats struct {
 	NewestChunk *time.Time
 }
 
+// DeleteBySource deletes all chunks matching a source prefix.
+func (lm *LifecycleManager) DeleteBySource(sourcePrefix string) (int, error) {
+	if lm == nil || lm.db == nil {
+		return 0, nil
+	}
+	pattern := sourcePrefix + "%"
+	result, err := lm.db.Exec(`DELETE FROM memory_chunks WHERE source LIKE ?`, pattern)
+	if err != nil {
+		return 0, fmt.Errorf("delete by source: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	return int(n), nil
+}
+
+// DeleteAll deletes all chunks from memory.
+func (lm *LifecycleManager) DeleteAll() (int, error) {
+	if lm == nil || lm.db == nil {
+		return 0, nil
+	}
+	result, err := lm.db.Exec(`DELETE FROM memory_chunks`)
+	if err != nil {
+		return 0, fmt.Errorf("delete all: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	return int(n), nil
+}
+
 // permanentPatterns returns source prefixes with TTL=0.
 func (lm *LifecycleManager) permanentPatterns() []string {
 	var patterns []string

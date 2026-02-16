@@ -332,6 +332,59 @@ func (o *Observer) ObservationCount(sessionID string) int {
 	return count
 }
 
+// ObserverStatus holds the current observer status.
+type ObserverStatus struct {
+	Enabled          bool      `json:"enabled"`
+	ObservationCount int       `json:"observation_count"`
+	QueueDepth       int       `json:"queue_depth"`
+	LastObservation  time.Time `json:"last_observation"`
+}
+
+// Status returns the current observer status.
+func (o *Observer) Status() ObserverStatus {
+	if o == nil || o.db == nil {
+		return ObserverStatus{}
+	}
+	status := ObserverStatus{Enabled: true}
+
+	o.db.QueryRow(`SELECT COUNT(*) FROM observations`).Scan(&status.ObservationCount)
+	o.db.QueryRow(`SELECT COUNT(*) FROM observations_queue WHERE observed = 0`).Scan(&status.QueueDepth)
+	o.db.QueryRow(`SELECT MAX(observed_at) FROM observations`).Scan(&status.LastObservation)
+
+	return status
+}
+
+// AllObservations returns all observations across all sessions, ordered by date.
+func (o *Observer) AllObservations(limit int) ([]Observation, error) {
+	if o == nil || o.db == nil {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+
+	rows, err := o.db.Query(
+		`SELECT id, session_id, content, priority, observed_at, referenced_at
+		 FROM observations ORDER BY observed_at DESC LIMIT ?`, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []Observation
+	for rows.Next() {
+		var obs Observation
+		var id int64
+		if err := rows.Scan(&id, &obs.SessionID, &obs.Content, &obs.Priority, &obs.ObservedAt, &obs.ReferencedAt); err != nil {
+			continue
+		}
+		obs.ID = fmt.Sprintf("obs-%d", id)
+		results = append(results, obs)
+	}
+	return results, nil
+}
+
 // parseObservations extracts observations from LLM response text.
 // Expected format per line: "- [HIGH|MEDIUM|LOW] content text"
 // Lines starting with "## YYYY-MM-DD" set the referenced date context.

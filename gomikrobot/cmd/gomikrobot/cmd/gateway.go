@@ -1869,6 +1869,288 @@ func runGateway(cmd *cobra.Command, args []string) {
 			json.NewEncoder(w).Encode(map[string]bool{"silent_mode": timeSvc.IsSilentMode()})
 		})
 
+		// API: Memory Status (GET)
+		mux.HandleFunc("/api/v1/memory/status", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Content-Type", "application/json")
+			if r.Method == "OPTIONS" {
+				return
+			}
+
+			type layerInfo struct {
+				Name         string `json:"name"`
+				SourcePrefix string `json:"source_prefix"`
+				Description  string `json:"description"`
+				TTLDays      int    `json:"ttl_days"`
+				ChunkCount   int    `json:"chunk_count"`
+				Color        string `json:"color"`
+			}
+
+			// Get chunk stats from lifecycle manager
+			stats, _ := lifecycleMgr.Stats()
+
+			layers := []layerInfo{
+				{Name: "soul", SourcePrefix: "soul:", Description: "Identity and personality files loaded at startup", TTLDays: 0, ChunkCount: stats.BySource["soul"], Color: "#a855f7"},
+				{Name: "conversation", SourcePrefix: "conversation:", Description: "Auto-indexed Q&A pairs from your conversations", TTLDays: 30, ChunkCount: stats.BySource["conversation"], Color: "#58a6ff"},
+				{Name: "tool", SourcePrefix: "tool:", Description: "Tool execution outputs and results", TTLDays: 14, ChunkCount: stats.BySource["tool"], Color: "#fb923c"},
+				{Name: "group", SourcePrefix: "group:", Description: "Shared knowledge from group collaboration", TTLDays: 60, ChunkCount: stats.BySource["group"], Color: "#22c55e"},
+				{Name: "er1", SourcePrefix: "er1:", Description: "Personal memories synced from ER1", TTLDays: 0, ChunkCount: stats.BySource["er1"], Color: "#fbbf24"},
+				{Name: "observation", SourcePrefix: "observation:", Description: "Compressed observations from conversation analysis", TTLDays: 0, ChunkCount: stats.BySource["observation"], Color: "#67e8f9"},
+			}
+
+			// Working memory
+			wmEntries := 0
+			wmPreview := ""
+			if workingMemoryStore != nil {
+				if entries, err := workingMemoryStore.ListAll(); err == nil {
+					wmEntries = len(entries)
+					if len(entries) > 0 {
+						wmPreview = entries[0].Content
+						if len(wmPreview) > 500 {
+							wmPreview = wmPreview[:500] + "..."
+						}
+					}
+				}
+			}
+
+			// Observer status
+			observerStatus := map[string]any{
+				"enabled":           false,
+				"observation_count": 0,
+				"queue_depth":       0,
+				"last_observation":  nil,
+			}
+			if observer != nil {
+				os := observer.Status()
+				observerStatus["enabled"] = os.Enabled
+				observerStatus["observation_count"] = os.ObservationCount
+				observerStatus["queue_depth"] = os.QueueDepth
+				if !os.LastObservation.IsZero() {
+					observerStatus["last_observation"] = os.LastObservation
+				}
+			}
+
+			// Recent observations
+			type obsJSON struct {
+				ID       string `json:"id"`
+				Content  string `json:"content"`
+				Priority string `json:"priority"`
+				Date     string `json:"date"`
+			}
+			var recentObs []obsJSON
+			if observer != nil {
+				if obs, err := observer.AllObservations(20); err == nil {
+					for _, o := range obs {
+						recentObs = append(recentObs, obsJSON{
+							ID:       o.ID,
+							Content:  o.Content,
+							Priority: o.Priority,
+							Date:     o.ObservedAt.Format(time.RFC3339),
+						})
+					}
+				}
+			}
+
+			// ER1 status
+			er1Status := map[string]any{
+				"connected":    false,
+				"last_sync":    nil,
+				"synced_count": 0,
+				"url":          "",
+			}
+			if er1Client != nil {
+				es := er1Client.Status()
+				er1Status["connected"] = es.Connected
+				er1Status["url"] = es.URL
+				er1Status["synced_count"] = stats.BySource["er1"]
+				if !es.LastSync.IsZero() {
+					er1Status["last_sync"] = es.LastSync
+				}
+			}
+
+			// Expertise
+			type expertiseJSON struct {
+				Skill string  `json:"skill"`
+				Score float64 `json:"score"`
+				Trend string  `json:"trend"`
+				Uses  int     `json:"uses"`
+			}
+			var expertise []expertiseJSON
+			if expertiseTracker != nil {
+				if skills, err := expertiseTracker.ListExpertise(); err == nil {
+					for _, s := range skills {
+						expertise = append(expertise, expertiseJSON{
+							Skill: s.SkillName,
+							Score: s.Score,
+							Trend: s.Trend,
+							Uses:  s.SuccessCount + s.FailureCount,
+						})
+					}
+				}
+			}
+
+			// Totals
+			totals := map[string]any{
+				"total_chunks": stats.TotalChunks,
+				"max_chunks":   50000,
+			}
+			if stats.OldestChunk != nil {
+				totals["oldest"] = stats.OldestChunk
+			}
+			if stats.NewestChunk != nil {
+				totals["newest"] = stats.NewestChunk
+			}
+
+			// Config
+			observerEnabled := observer != nil
+			observerThreshold := 50
+			observerMaxObs := 200
+			if observer != nil {
+				observerThreshold = cfg.Observer.MessageThreshold
+				observerMaxObs = cfg.Observer.MaxObservations
+			}
+			er1URL := ""
+			er1SyncIntervalSec := 300
+			if er1Client != nil {
+				es := er1Client.Status()
+				er1URL = es.URL
+				er1SyncIntervalSec = int(cfg.ER1.SyncInterval.Seconds())
+				if er1SyncIntervalSec <= 0 {
+					er1SyncIntervalSec = 300
+				}
+			}
+
+			memConfig := map[string]any{
+				"observer_enabled":      observerEnabled,
+				"observer_threshold":    observerThreshold,
+				"observer_max_obs":      observerMaxObs,
+				"er1_url":              er1URL,
+				"er1_sync_interval_sec": er1SyncIntervalSec,
+				"max_chunks":           50000,
+			}
+
+			json.NewEncoder(w).Encode(map[string]any{
+				"layers":         layers,
+				"working_memory": map[string]any{"entries": wmEntries, "preview": wmPreview},
+				"observer":       observerStatus,
+				"observations":   recentObs,
+				"er1":            er1Status,
+				"expertise":      expertise,
+				"totals":         totals,
+				"config":         memConfig,
+			})
+		})
+
+		// API: Memory Reset (POST)
+		mux.HandleFunc("/api/v1/memory/reset", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Content-Type", "application/json")
+			if r.Method == "OPTIONS" {
+				return
+			}
+			if r.Method != http.MethodPost {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
+			var body struct {
+				Layer string `json:"layer"` // "soul", "conversation", "tool", "group", "er1", "observation", "working_memory", "all"
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, "invalid body", http.StatusBadRequest)
+				return
+			}
+
+			deleted := 0
+			var resetErr error
+
+			switch body.Layer {
+			case "all":
+				deleted, resetErr = lifecycleMgr.DeleteAll()
+				if resetErr == nil && workingMemoryStore != nil {
+					_ = workingMemoryStore.DeleteAll()
+				}
+			case "working_memory":
+				if workingMemoryStore != nil {
+					resetErr = workingMemoryStore.DeleteAll()
+				}
+			case "soul", "conversation", "tool", "group", "er1", "observation":
+				deleted, resetErr = lifecycleMgr.DeleteBySource(body.Layer + ":")
+			default:
+				http.Error(w, "invalid layer", http.StatusBadRequest)
+				return
+			}
+
+			if resetErr != nil {
+				http.Error(w, resetErr.Error(), http.StatusInternalServerError)
+				return
+			}
+
+			fmt.Printf("🧹 Memory reset: layer=%s deleted=%d\n", body.Layer, deleted)
+			json.NewEncoder(w).Encode(map[string]any{"status": "ok", "deleted": deleted})
+		})
+
+		// API: Memory Config (POST)
+		mux.HandleFunc("/api/v1/memory/config", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Content-Type", "application/json")
+			if r.Method == "OPTIONS" {
+				return
+			}
+			if r.Method != http.MethodPost {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, "invalid body", http.StatusBadRequest)
+				return
+			}
+
+			// Save each config key as a setting
+			for key, value := range body {
+				strVal := fmt.Sprintf("%v", value)
+				if err := timeSvc.SetSetting("memory_"+key, strVal); err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				fmt.Printf("⚙️ Memory config changed: %s = %s\n", key, strVal)
+			}
+
+			json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		})
+
+		// API: Memory Prune (POST)
+		mux.HandleFunc("/api/v1/memory/prune", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Content-Type", "application/json")
+			if r.Method == "OPTIONS" {
+				return
+			}
+			if r.Method != http.MethodPost {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
+			deleted, err := lifecycleMgr.Prune()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+			fmt.Printf("🧹 Memory prune triggered: deleted=%d\n", deleted)
+			json.NewEncoder(w).Encode(map[string]any{"status": "ok", "deleted": deleted})
+		})
+
 		// API: Work Repo (GET/POST)
 		mux.HandleFunc("/api/v1/workrepo", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Access-Control-Allow-Origin", "*")

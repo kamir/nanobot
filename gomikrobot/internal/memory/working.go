@@ -105,6 +105,38 @@ func (w *WorkingMemoryStore) LoadBoth(resourceID, threadID string) (resourceCont
 	return resourceContent, threadContent, nil
 }
 
+// ListAll returns all working memory entries.
+func (w *WorkingMemoryStore) ListAll() ([]WorkingMemoryEntry, error) {
+	if w == nil || w.db == nil {
+		return nil, nil
+	}
+
+	rows, err := w.db.Query(`SELECT resource_id, thread_id, content, updated_at FROM working_memory ORDER BY updated_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []WorkingMemoryEntry
+	for rows.Next() {
+		var e WorkingMemoryEntry
+		if err := rows.Scan(&e.ResourceID, &e.ThreadID, &e.Content, &e.UpdatedAt); err != nil {
+			continue
+		}
+		entries = append(entries, e)
+	}
+	return entries, nil
+}
+
+// DeleteAll removes all working memory entries.
+func (w *WorkingMemoryStore) DeleteAll() error {
+	if w == nil || w.db == nil {
+		return nil
+	}
+	_, err := w.db.Exec(`DELETE FROM working_memory`)
+	return err
+}
+
 // Delete removes working memory for a given resource/thread combination.
 func (w *WorkingMemoryStore) Delete(resourceID, threadID string) error {
 	if w == nil || w.db == nil {
