@@ -229,4 +229,6 @@ KShark is a built-in Kafka diagnostic tool for verifying connectivity and inspec
 
 ## License
 
-MIT
+Licensed under the [Apache License, Version 2.0](LICENSE).
+
+This project is a hard fork of [HKUDS/nanobot](https://github.com/HKUDS/nanobot), which was originally released under the MIT License. The original MIT license and attribution are preserved in the [NOTICE](NOTICE) file, as required.
