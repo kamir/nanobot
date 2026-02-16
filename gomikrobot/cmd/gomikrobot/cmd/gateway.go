@@ -258,22 +258,56 @@ func runGateway(cmd *cobra.Command, args []string) {
 	expertiseTracker := memory.NewExpertiseTracker(timeSvc.DB())
 	fmt.Println("🎯 Expertise tracker initialized")
 
+	// 5a-ii. Setup Working Memory Store
+	workingMemoryStore := memory.NewWorkingMemoryStore(timeSvc.DB())
+	fmt.Println("📋 Working memory store initialized")
+
+	// 5a-iii. Setup Observer (observational memory)
+	var observer *memory.Observer
+	if cfg.Observer.Enabled {
+		observer = memory.NewObserver(memory.ObserverConfig{
+			Enabled:          true,
+			Model:            cfg.Observer.Model,
+			MessageThreshold: cfg.Observer.MessageThreshold,
+			MaxObservations:  cfg.Observer.MaxObservations,
+		}, prov, timeSvc.DB())
+		if observer != nil {
+			fmt.Println("👁️  Observer initialized")
+		}
+	}
+
+	// 5a-iv. Setup ER1 Client (personal memory sync)
+	var er1Client *memory.ER1Client
+	if cfg.ER1.URL != "" && memorySvc != nil {
+		er1Client = memory.NewER1Client(memory.ER1Config{
+			URL:          cfg.ER1.URL,
+			APIKey:       cfg.ER1.APIKey,
+			UserID:       cfg.ER1.UserID,
+			SyncInterval: cfg.ER1.SyncInterval,
+		}, memorySvc)
+		if er1Client != nil {
+			fmt.Println("🔗 ER1 client initialized")
+		}
+	}
+
 	// 5b. Setup Loop
 	loop := agent.NewLoop(agent.LoopOptions{
-		Bus:            msgBus,
-		Provider:       prov,
-		Timeline:       timeSvc,
-		Policy:         policyEngine,
+		Bus:              msgBus,
+		Provider:         prov,
+		Timeline:         timeSvc,
+		Policy:           policyEngine,
 		MemoryService:    memorySvc,
 		AutoIndexer:      autoIndexer,
 		ExpertiseTracker: expertiseTracker,
+		WorkingMemory:    workingMemoryStore,
+		Observer:         observer,
 		GroupPublisher:   groupPublisher,
-		Workspace:      cfg.Paths.Workspace,
-		WorkRepo:       workRepoPath,
-		SystemRepo:     systemRepoPath,
-		WorkRepoGetter: getWorkRepo,
-		Model:          cfg.Model.Name,
-		MaxIterations:  cfg.Model.MaxToolIterations,
+		Workspace:        cfg.Paths.Workspace,
+		WorkRepo:         workRepoPath,
+		SystemRepo:       systemRepoPath,
+		WorkRepoGetter:   getWorkRepo,
+		Model:            cfg.Model.Name,
+		MaxIterations:    cfg.Model.MaxToolIterations,
 	})
 
 	// 5b. Index soul files (non-blocking background)
@@ -301,6 +335,11 @@ func runGateway(cmd *cobra.Command, args []string) {
 	// Start Auto-Indexer
 	if autoIndexer != nil {
 		go autoIndexer.Run(ctx)
+	}
+
+	// Start ER1 Sync Loop
+	if er1Client != nil {
+		go er1Client.SyncLoop(ctx)
 	}
 
 	// Start Memory Lifecycle Manager (daily pruning)

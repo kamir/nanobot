@@ -38,6 +38,8 @@ type LoopOptions struct {
 	MemoryService    *memory.MemoryService
 	AutoIndexer      *memory.AutoIndexer
 	ExpertiseTracker *memory.ExpertiseTracker
+	WorkingMemory    *memory.WorkingMemoryStore
+	Observer         *memory.Observer
 	GroupPublisher   GroupTracePublisher
 	Workspace        string
 	WorkRepo         string
@@ -56,6 +58,8 @@ type Loop struct {
 	memoryService    *memory.MemoryService
 	autoIndexer      *memory.AutoIndexer
 	expertiseTracker *memory.ExpertiseTracker
+	workingMemory    *memory.WorkingMemoryStore
+	observer         *memory.Observer
 	groupPublisher   GroupTracePublisher
 	approvalMgr    *approval.Manager
 	registry       *tools.Registry
@@ -98,6 +102,8 @@ func NewLoop(opts LoopOptions) *Loop {
 		memoryService:    opts.MemoryService,
 		autoIndexer:      opts.AutoIndexer,
 		expertiseTracker: opts.ExpertiseTracker,
+		workingMemory:    opts.WorkingMemory,
+		observer:         opts.Observer,
 		groupPublisher:   opts.GroupPublisher,
 		approvalMgr:    approval.NewManager(opts.Timeline),
 		registry:       registry,
@@ -248,6 +254,12 @@ func (l *Loop) ProcessDirectWithTrace(ctx context.Context, content, sessionKey, 
 	// Build messages using the context builder
 	messages := l.contextBuilder.BuildMessages(sess, content, channel, chatID, l.activeMessageType)
 
+	// Inject working memory (scoped per user/thread)
+	messages = l.injectWorkingMemory(messages, chatID, sessionKey)
+
+	// Inject observations (compressed session history)
+	messages = l.injectObservations(messages, sessionKey)
+
 	// Inject RAG context from semantic memory
 	messages = l.injectRAGContext(ctx, messages, content)
 
@@ -264,6 +276,25 @@ func (l *Loop) ProcessDirectWithTrace(ctx context.Context, content, sessionKey, 
 	// Auto-index conversation pair into semantic memory
 	if l.autoIndexer != nil {
 		l.autoIndexer.Enqueue(memory.FormatConversationPair(content, response, channel, chatID))
+	}
+
+	// Enqueue messages for observational memory and trigger compression if needed
+	if l.observer != nil {
+		l.observer.EnqueueMessage(sessionKey, "user", content)
+		l.observer.EnqueueMessage(sessionKey, "assistant", response)
+		if l.observer.ShouldObserve(sessionKey) {
+			go func() {
+				if err := l.observer.Observe(context.Background(), sessionKey); err != nil {
+					slog.Warn("Observer compression failed", "error", err)
+				}
+				// Check if reflector should run
+				if l.observer.ShouldReflect(sessionKey) {
+					if err := l.observer.Reflect(context.Background(), sessionKey); err != nil {
+						slog.Warn("Reflector consolidation failed", "error", err)
+					}
+				}
+			}()
+		}
 	}
 
 	return response, nil
@@ -837,6 +868,61 @@ func (l *Loop) injectRAGContext(ctx context.Context, messages []provider.Message
 
 	// Append to system prompt (first message)
 	messages[0].Content += sb.String()
+	return messages
+}
+
+// injectWorkingMemory loads scoped working memory and appends it to the system prompt.
+func (l *Loop) injectWorkingMemory(messages []provider.Message, resourceID, threadID string) []provider.Message {
+	if l.workingMemory == nil || len(messages) == 0 {
+		return messages
+	}
+
+	resContent, thrContent, err := l.workingMemory.LoadBoth(resourceID, threadID)
+	if err != nil {
+		slog.Warn("Working memory load failed", "error", err)
+		return messages
+	}
+
+	if resContent == "" && thrContent == "" {
+		return messages
+	}
+
+	var sb strings.Builder
+	sb.WriteString("\n\n---\n\n# Working Memory\n\n")
+	if resContent != "" {
+		sb.WriteString(resContent)
+		sb.WriteString("\n")
+	}
+	if thrContent != "" {
+		if resContent != "" {
+			sb.WriteString("\n## Thread Context\n\n")
+		}
+		sb.WriteString(thrContent)
+		sb.WriteString("\n")
+	}
+
+	messages[0].Content += sb.String()
+	return messages
+}
+
+// injectObservations loads compressed observation notes and appends them to the system prompt.
+func (l *Loop) injectObservations(messages []provider.Message, sessionID string) []provider.Message {
+	if l.observer == nil || len(messages) == 0 {
+		return messages
+	}
+
+	observations, err := l.observer.LoadObservations(sessionID)
+	if err != nil {
+		slog.Warn("Observations load failed", "error", err)
+		return messages
+	}
+
+	formatted := memory.FormatObservations(observations)
+	if formatted == "" {
+		return messages
+	}
+
+	messages[0].Content += "\n\n---\n\n" + formatted
 	return messages
 }
 

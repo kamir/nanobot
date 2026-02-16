@@ -650,4 +650,32 @@ CREATE TABLE IF NOT EXISTS skill_events (
 );
 CREATE INDEX IF NOT EXISTS idx_skill_events_skill ON skill_events(skill_name);
 CREATE INDEX IF NOT EXISTS idx_skill_events_created ON skill_events(created_at);
+
+CREATE TABLE IF NOT EXISTS working_memory (
+	resource_id TEXT NOT NULL,
+	thread_id   TEXT NOT NULL DEFAULT '',
+	content     TEXT NOT NULL DEFAULT '',
+	updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY (resource_id, thread_id)
+);
+
+CREATE TABLE IF NOT EXISTS observations_queue (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	session_id TEXT NOT NULL,
+	role TEXT NOT NULL,
+	content TEXT NOT NULL,
+	observed INTEGER NOT NULL DEFAULT 0,
+	created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_obs_queue_session ON observations_queue(session_id, observed);
+
+CREATE TABLE IF NOT EXISTS observations (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	session_id TEXT NOT NULL,
+	content TEXT NOT NULL,
+	priority TEXT NOT NULL DEFAULT 'medium',
+	observed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	referenced_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_observations_session ON observations(session_id);
 `

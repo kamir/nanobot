@@ -15,6 +15,8 @@ type Config struct {
 	Group        GroupConfig        `json:"group"`
 	Orchestrator OrchestratorConfig `json:"orchestrator"`
 	Scheduler    SchedulerConfig    `json:"scheduler"`
+	ER1          ER1IntegrationConfig `json:"er1"`
+	Observer     ObserverMemoryConfig `json:"observer"`
 }
 
 // ---------------------------------------------------------------------------
@@ -200,6 +202,30 @@ type SearchConfig struct {
 	MaxResults int    `json:"maxResults"`
 }
 
+// ---------------------------------------------------------------------------
+// ER1 – personal memory service integration
+// ---------------------------------------------------------------------------
+
+// ER1IntegrationConfig configures the ER1 memory service connection.
+type ER1IntegrationConfig struct {
+	URL          string        `json:"url" envconfig:"ER1_URL"`
+	APIKey       string        `json:"apiKey" envconfig:"ER1_API_KEY"`
+	UserID       string        `json:"userId" envconfig:"ER1_USER_ID"`
+	SyncInterval time.Duration `json:"syncInterval" envconfig:"ER1_SYNC_INTERVAL"`
+}
+
+// ---------------------------------------------------------------------------
+// Observer – observational memory (LLM compression)
+// ---------------------------------------------------------------------------
+
+// ObserverMemoryConfig configures the observational memory system.
+type ObserverMemoryConfig struct {
+	Enabled          bool   `json:"enabled" envconfig:"OBSERVER_ENABLED"`
+	Model            string `json:"model" envconfig:"OBSERVER_MODEL"`
+	MessageThreshold int    `json:"messageThreshold" envconfig:"OBSERVER_MSG_THRESHOLD"`
+	MaxObservations  int    `json:"maxObservations" envconfig:"OBSERVER_MAX_OBS"`
+}
+
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
@@ -253,6 +279,14 @@ func DefaultConfig() *Config {
 			MaxConcLLM:     3,
 			MaxConcShell:   1,
 			MaxConcDefault: 5,
+		},
+		ER1: ER1IntegrationConfig{
+			SyncInterval: 5 * time.Minute,
+		},
+		Observer: ObserverMemoryConfig{
+			Enabled:          false,
+			MessageThreshold: 50,
+			MaxObservations:  200,
 		},
 	}
 }

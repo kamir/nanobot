@@ -52,9 +52,9 @@ func (b *ContextBuilder) BuildSystemPrompt() string {
 		parts = append(parts, bootstrap)
 	}
 
-	// 3. Memory
-	if memory := b.loadMemory(); memory != "" {
-		parts = append(parts, "# Memory\n\n"+memory)
+	// 3. Static Memory (legacy MEMORY.md)
+	if mem := b.loadMemory(); mem != "" {
+		parts = append(parts, "# Memory\n\n"+mem)
 	}
 
 	// 4. Skills (Summary)
